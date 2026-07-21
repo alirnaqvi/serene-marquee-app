@@ -96,7 +96,7 @@ export function calcTotals(
 }
 
 export function chargesFromBooking(
-  booking: Pick
+  booking: Pick<
     Booking,
     | "guests"
     | "venues"
