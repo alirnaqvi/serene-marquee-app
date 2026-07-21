@@ -90,7 +90,7 @@ export default function StaffAdminPage() {
           </thead>
           <tbody>
             {staff.map((p) => {
-              const isSelf = p.id === myProfile.id;
+              const isSelf = p.id === myProfile?.id;
               const ledgerAutoGranted = LEDGER_ROLES.includes(p.role);
               const isGeneralManager = p.role === "general_manager";
               return (
