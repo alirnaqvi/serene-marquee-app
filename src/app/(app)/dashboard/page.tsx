@@ -2,8 +2,7 @@ import Link from "next/link";
 import { CalendarClock, Wallet, TrendingUp, TrendingDown, ArrowUpRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
-import type { Booking, Venue, Menu } from "@/types";
-
+import type { Venue, Menu } from "@/types";
 // This page must never be cached/statically generated — it shows live
 // booking/ledger data that changes constantly and differs per logged-in
 // user (ledger visibility depends on role). See server.ts for the related
@@ -110,13 +109,13 @@ export default async function DashboardPage() {
   in30Days.setDate(in30Days.getDate() + 30);
   const in30DaysStr = in30Days.toISOString().slice(0, 10);
 
-  const activeBookings = (bookings || []).filter((b: Booking) => b.status !== "Cancelled");
+  const activeBookings = (bookings || []).filter((b) => b.status !== "Cancelled");
   const upcomingWithin30Days = activeBookings.filter(
-    (b: Booking) => b.event_date >= today && b.event_date <= in30DaysStr
+    (b) => b.event_date >= today && b.event_date <= in30DaysStr
   );
-  const upcoming = activeBookings.filter((b: Booking) => b.event_date >= today).slice(0, 8);
+  const upcoming = activeBookings.filter((b) => b.event_date >= today).slice(0, 8);
   const totalDue = activeBookings.reduce(
-    (sum: number, b: Booking) => sum + chargesFromBooking(b, venues as Venue[], menus as Menu[]).balance,
+    (sum: number, b) => sum + chargesFromBooking(b, venues as Venue[], menus as Menu[]).balance,
     0
   );
   const income = (ledger || []).filter((l) => l.type === "income").reduce((s, l) => s + l.amount, 0);
@@ -183,7 +182,7 @@ export default async function DashboardPage() {
                 </td>
               </tr>
             )}
-            {upcoming.map((b: Booking) => {
+            {upcoming.map((b) => {
               const t = chargesFromBooking(b, venues as Venue[], menus as Menu[]);
               return (
                 <tr key={b.id} className="border-b border-border last:border-0 hover:bg-[#FBF8ED]">
