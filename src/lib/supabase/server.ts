@@ -37,7 +37,8 @@ export function createClient() {
         },
       },
       global: {
-        fetch: (url, options = {}) => fetch(url, { ...options, cache: "no-store" }),
+        fetch: (url: RequestInfo | URL, options: RequestInit = {}) =>
+          fetch(url, { ...options, cache: "no-store" }),
       },
     }
   );
