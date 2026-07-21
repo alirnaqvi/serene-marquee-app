@@ -95,7 +95,25 @@ export function calcTotals(
   };
 }
 
-export function chargesFromBooking(booking: Booking, allVenues: Venue[], allMenus: Menu[]) {
+export function chargesFromBooking(
+  booking: Pick
+    Booking,
+    | "guests"
+    | "venues"
+    | "menu_id"
+    | "is_custom_menu"
+    | "custom_menu_total"
+    | "addons_total"
+    | "discount"
+    | "filer"
+    | "decoration"
+    | "heaters"
+    | "cooling"
+    | "advance"
+  >,
+  allVenues: Venue[],
+  allMenus: Menu[]
+) {
   return calcTotals(
     {
       guests: booking.guests,
