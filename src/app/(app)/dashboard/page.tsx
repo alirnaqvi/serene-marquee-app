@@ -3,10 +3,10 @@ import { CalendarClock, Wallet, TrendingUp, TrendingDown, ArrowUpRight } from "l
 import { createClient } from "@/lib/supabase/server";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import type { Venue, Menu } from "@/types";
+
 // This page must never be cached/statically generated — it shows live
 // booking/ledger data that changes constantly and differs per logged-in
-// user (ledger visibility depends on role). See server.ts for the related
-// fetch-cache fix; this is the page-level belt-and-suspenders.
+// user (ledger visibility depends on role).
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -78,10 +78,6 @@ export default async function DashboardPage() {
     canViewLedgerFlag = me?.can_view_ledger ?? false;
   }
   const isGeneralManager = role === "general_manager";
-  // Mirror the ledger_entries RLS rule exactly, rather than inferring access
-  // from whether the query returned null — Supabase/RLS returns an empty
-  // array (not null) when rows are simply filtered out, so that check alone
-  // can't tell "no access" apart from "access, but nothing recorded yet".
   const hasLedgerAccess =
     role === "owner" || role === "admin" || role === "manager" || (!!canViewLedgerFlag && !isGeneralManager);
 
@@ -96,10 +92,6 @@ export default async function DashboardPage() {
       .order("event_date", { ascending: true }),
   ]);
 
-  // Only fetch the ledger at all if this user is actually allowed to see it —
-  // for General Manager (and anyone else without access) we skip the query
-  // entirely rather than fetch-then-hide, since an RLS-filtered result would
-  // come back as [] and be indistinguishable from "ledger genuinely empty".
   const { data: ledger } = hasLedgerAccess
     ? await supabase.from("ledger_entries").select("type, amount")
     : { data: null as { type: string; amount: number }[] | null };
@@ -113,13 +105,13 @@ export default async function DashboardPage() {
   const upcomingWithin30Days = activeBookings.filter(
     (b: any) => b.event_date >= today && b.event_date <= in30DaysStr
   );
-  const upcoming = activeBookings.filter((b) => b.event_date >= today).slice(0, 8);
+  const upcoming = activeBookings.filter((b: any) => b.event_date >= today).slice(0, 8);
   const totalDue = activeBookings.reduce(
-    (sum: number, b) => sum + chargesFromBooking(b, venues as Venue[], menus as Menu[]).balance,
+    (sum: number, b: any) => sum + chargesFromBooking(b, venues as Venue[], menus as Menu[]).balance,
     0
   );
-  const income = (ledger || []).filter((l) => l.type === "income").reduce((s, l) => s + l.amount, 0);
-  const expense = (ledger || []).filter((l) => l.type === "expense").reduce((s, l) => s + l.amount, 0);
+  const income = (ledger || []).filter((l: any) => l.type === "income").reduce((s: number, l: any) => s + l.amount, 0);
+  const expense = (ledger || []).filter((l: any) => l.type === "expense").reduce((s: number, l: any) => s + l.amount, 0);
 
   return (
     <div>
@@ -163,46 +155,46 @@ export default async function DashboardPage() {
           </Link>
         </div>
         <div className="overflow-x-auto -mx-1">
-        <table className="w-full text-[13px] min-w-[560px]">
-          <thead>
-            <tr className="text-left text-muted text-[11px] uppercase tracking-wide border-b border-border">
-              <th className="py-2 px-2">Date</th>
-              <th className="py-2 px-2">Client</th>
-              <th className="py-2 px-2">Function</th>
-              <th className="py-2 px-2">Guests</th>
-              <th className="py-2 px-2">Status</th>
-              <th className="py-2 px-2">Balance</th>
-            </tr>
-          </thead>
-          <tbody>
-            {upcoming.length === 0 && (
-              <tr>
-                <td colSpan={6} className="text-center py-8 text-muted text-sm">
-                  No upcoming functions
-                </td>
+          <table className="w-full text-[13px] min-w-[560px]">
+            <thead>
+              <tr className="text-left text-muted text-[11px] uppercase tracking-wide border-b border-border">
+                <th className="py-2 px-2">Date</th>
+                <th className="py-2 px-2">Client</th>
+                <th className="py-2 px-2">Function</th>
+                <th className="py-2 px-2">Guests</th>
+                <th className="py-2 px-2">Status</th>
+                <th className="py-2 px-2">Balance</th>
               </tr>
-            )}
-            {upcoming.map((b) => {
-              const t = chargesFromBooking(b, venues as Venue[], menus as Menu[]);
-              return (
-                <tr key={b.id} className="border-b border-border last:border-0 hover:bg-[#FBF8ED]">
-                  <td className="py-2.5 px-2">
-                    <Link href={`/bookings/${b.id}`} className="hover:underline font-medium">
-                      {fmtDate(b.event_date)}
-                    </Link>
-                    <br />
-                    <span className="text-[11px] text-muted">{b.session}</span>
+            </thead>
+            <tbody>
+              {upcoming.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="text-center py-8 text-muted text-sm">
+                    No upcoming functions
                   </td>
-                  <td className="py-2.5 px-2">{b.client}</td>
-                  <td className="py-2.5 px-2">{functionLabel(b)}</td>
-                  <td className="py-2.5 px-2">{b.guests}</td>
-                  <td className="py-2.5 px-2">{statusPill(b.status)}</td>
-                  <td className="py-2.5 px-2 font-semibold">{money(t.balance)}</td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              )}
+              {upcoming.map((b: any) => {
+                const t = chargesFromBooking(b, venues as Venue[], menus as Menu[]);
+                return (
+                  <tr key={b.id} className="border-b border-border last:border-0 hover:bg-[#FBF8ED]">
+                    <td className="py-2.5 px-2">
+                      <Link href={`/bookings/${b.id}`} className="hover:underline font-medium">
+                        {fmtDate(b.event_date)}
+                      </Link>
+                      <br />
+                      <span className="text-[11px] text-muted">{b.session}</span>
+                    </td>
+                    <td className="py-2.5 px-2">{b.client}</td>
+                    <td className="py-2.5 px-2">{functionLabel(b)}</td>
+                    <td className="py-2.5 px-2">{b.guests}</td>
+                    <td className="py-2.5 px-2">{statusPill(b.status)}</td>
+                    <td className="py-2.5 px-2 font-semibold">{money(t.balance)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
