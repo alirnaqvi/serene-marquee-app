@@ -186,11 +186,13 @@ create table if not exists public.bookings (
   email text,
   function_type text not null,
   function_type_other text,
+  entry_test_type text,                       -- e.g. 'MDCAT' — only used when function_type = 'Entry Test'
   guests int not null default 0,
-  menu_id text references public.menus(id),   -- null when is_custom_menu = true
+  menu_id text references public.menus(id),   -- null when is_custom_menu = true or function_type = 'Entry Test'
   is_custom_menu boolean not null default false,
   custom_menu_total numeric not null default 0,  -- fully custom menu total, replaces the regular rate
   addons_total numeric not null default 0,       -- extra items added on top of a regular menu's rate
+  removed_menu_items text[] not null default '{}', -- items unchecked from the selected offered menu's included list
   discount numeric not null default 0,        -- flat Rs. amount (not a percentage)
   reference text,
   filer text not null default 'Filer' check (filer in ('Filer','Non-Filer')),
@@ -201,6 +203,8 @@ create table if not exists public.bookings (
   notes text,
   status text not null default 'Tentative' check (status in ('Tentative','Confirmed','Cancelled')),
   created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
 
 create index if not exists bookings_date_idx on public.bookings (event_date);
 create index if not exists bookings_venues_idx on public.bookings using gin (venues);
@@ -594,4 +598,13 @@ alter table public.ledger_entries add constraint ledger_entries_created_by_fkey
 alter table public.system_issues drop constraint if exists system_issues_created_by_fkey;
 alter table public.system_issues add constraint system_issues_created_by_fkey
   foreign key (created_by) references public.profiles(id) on delete set null;
+-- ============================================================================
+
+-- ============================================================================
+-- MIGRATION: "Entry Test" function type (flat Rs. 600/head, no menu) and the
+-- ability to remove individual items from an otherwise-fixed offered menu on
+-- a specific booking. Run this once.
+-- ============================================================================
+alter table public.bookings add column if not exists entry_test_type text;
+alter table public.bookings add column if not exists removed_menu_items text[] not null default '{}';
 -- ============================================================================
