@@ -109,9 +109,9 @@ export default async function DashboardPage() {
   in30Days.setDate(in30Days.getDate() + 30);
   const in30DaysStr = in30Days.toISOString().slice(0, 10);
 
-  const activeBookings = (bookings || []).filter((b: any) => b.status !== "Cancelled");
+  const activeBookings = (bookings || []).filter((b: Booking) => b.status !== "Cancelled");
   const upcomingWithin30Days = activeBookings.filter(
-    (b: any) => b.event_date >= today && b.event_date <= in30DaysStr
+    (b: Booking) => b.event_date >= today && b.event_date <= in30DaysStr
   );
   const upcoming = activeBookings.filter((b) => b.event_date >= today).slice(0, 8);
   const totalDue = activeBookings.reduce(
