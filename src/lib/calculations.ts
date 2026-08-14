@@ -1,4 +1,4 @@
-import { KPR_RATE, COOLING_CHARGE_PER_HALL, HEATER_CHARGE, incomeTaxRate } from "./constants";
+import { KPR_RATE, COOLING_CHARGE_PER_HALL, HEATER_CHARGE, ENTRY_TEST_RATE, incomeTaxRate } from "./constants";
 import type { Venue, Menu, Booking } from "@/types";
 
 export type ChargeInput = {
@@ -6,6 +6,7 @@ export type ChargeInput = {
   venues: string[]; // venue ids
   menuId: string | null;
   isCustomMenu?: boolean;
+  isEntryTest?: boolean; // Entry Test bookings: flat ENTRY_TEST_RATE/head, no menu involved
   customMenuTotal?: number; // required when isCustomMenu is true — fully replaces the menu rate
   addonsTotal?: number; // optional extra items added ON TOP of a regular menu's food subtotal
   discount: number; // flat Rs. amount (not a percentage)
@@ -19,18 +20,18 @@ export type ChargeInput = {
 export type ChargeBreakdown = {
   foodSubtotal: number;
   addonsTotal: number;
-  discountAmount: number;
-  afterDiscount: number;
   kprTax: number;
   hallCharge: number;
   coolingCharge: number;
   heatingCharge: number;
   decoration: number;
-  preTax: number;
+  preTax: number; // foodSubtotal + kprTax + hallCharge + cooling + heating + decoration — before income tax and before discount
   incomeTaxRate: number;
   incomeTax: number;
-  grandTotal: number;
-  balance: number;
+  totalBeforeDiscount: number; // every due added up (preTax + incomeTax) — discount hasn't been applied yet
+  discountAmount: number;
+  grandTotal: number; // totalBeforeDiscount - discountAmount
+  balance: number; // grandTotal - advance
 };
 
 export function calcTotals(
@@ -42,9 +43,12 @@ export function calcTotals(
     .map((id) => allVenues.find((v) => v.id === id))
     .filter((v): v is Venue => Boolean(v));
 
-  const addonsTotal = input.addonsTotal || 0;
+  const addonsTotal = input.isEntryTest ? 0 : input.addonsTotal || 0;
   let foodSubtotal: number;
-  if (input.isCustomMenu) {
+  if (input.isEntryTest) {
+    // Entry Test bookings: flat per-head rate, no menu/offered items involved.
+    foodSubtotal = input.guests * ENTRY_TEST_RATE;
+  } else if (input.isCustomMenu) {
     // A fully custom menu replaces the base rate entirely.
     foodSubtotal = input.customMenuTotal || 0;
   } else {
@@ -55,11 +59,11 @@ export function calcTotals(
     foodSubtotal = input.guests * rate + addonsTotal;
   }
 
-  // Discount is a flat Rs. amount now (staff found percentages hard to
-  // calculate by hand), capped so it can never exceed the food subtotal.
-  const discountAmount = Math.min(input.discount || 0, foodSubtotal);
-  const afterDiscount = foodSubtotal - discountAmount;
-  const kprTax = afterDiscount * KPR_RATE;
+  // KPRA tax and income tax are both calculated on the full, undiscounted
+  // dues — the discount is applied only once, at the very end, to the fully
+  // totaled amount (Food + KPRA + Hall + Decoration + Cooling/Heating +
+  // Income Tax), per owner policy. It is a flat Rs. amount, not a percentage.
+  const kprTax = foodSubtotal * KPR_RATE;
 
   // Hall charge is waived once guest count reaches each selected venue's
   // minimum (currently 200+ across all three venues, per owner policy).
@@ -71,17 +75,21 @@ export function calcTotals(
   const heatingCharge = (input.heaters || 0) * HEATER_CHARGE;
   const decoration = input.decoration || 0;
 
-  const preTax = afterDiscount + kprTax + hallCharge + coolingCharge + heatingCharge + decoration;
+  const preTax = foodSubtotal + kprTax + hallCharge + coolingCharge + heatingCharge + decoration;
   const taxRate = incomeTaxRate(input.filer);
   const incomeTax = preTax * taxRate;
-  const grandTotal = preTax + incomeTax;
+
+  // Everything is added up first...
+  const totalBeforeDiscount = preTax + incomeTax;
+  // ...then the discount (flat Rs., capped so it can't exceed the total) is
+  // deducted once from that grand total.
+  const discountAmount = Math.min(input.discount || 0, totalBeforeDiscount);
+  const grandTotal = totalBeforeDiscount - discountAmount;
   const balance = grandTotal - (input.advance || 0);
 
   return {
     foodSubtotal,
     addonsTotal,
-    discountAmount,
-    afterDiscount,
     kprTax,
     hallCharge,
     coolingCharge,
@@ -90,6 +98,8 @@ export function calcTotals(
     preTax,
     incomeTaxRate: taxRate,
     incomeTax,
+    totalBeforeDiscount,
+    discountAmount,
     grandTotal,
     balance,
   };
@@ -104,6 +114,7 @@ export function chargesFromBooking(
     | "is_custom_menu"
     | "custom_menu_total"
     | "addons_total"
+    | "function_type"
     | "discount"
     | "filer"
     | "decoration"
@@ -120,6 +131,7 @@ export function chargesFromBooking(
       venues: booking.venues,
       menuId: booking.menu_id,
       isCustomMenu: booking.is_custom_menu,
+      isEntryTest: booking.function_type === "Entry Test",
       customMenuTotal: booking.custom_menu_total,
       addonsTotal: booking.addons_total,
       discount: booking.discount,
@@ -140,4 +152,20 @@ export function money(n: number): string {
 
 export function functionLabel(b: Pick<Booking, "function_type" | "function_type_other">): string {
   return b.function_type === "Other" ? b.function_type_other || "Other" : b.function_type;
+}
+
+// Offered menus store their included items as one comma-separated string
+// (e.g. "Yakhni Pulao, Chicken Qorma, Kheer, ..."). These helpers let a
+// booking drop individual items from that fixed list — e.g. the host
+// doesn't want the salad — without switching to a full Customized Menu.
+export function parseMenuItems(items: string): string[] {
+  return items
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export function effectiveMenuItems(items: string, removedItems: string[] | null | undefined): string[] {
+  const removed = new Set(removedItems || []);
+  return parseMenuItems(items).filter((item) => !removed.has(item));
 }
