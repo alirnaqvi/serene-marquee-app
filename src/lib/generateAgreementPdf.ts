@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { chargesFromBooking, money, functionLabel } from "./calculations";
-import { SESSION_TIMES } from "./constants";
+import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "./calculations";
+import { SESSION_TIMES, ENTRY_TEST_RATE } from "./constants";
 import { fmtDMY, fmtDMYTime } from "./dateFormat";
 import { bookingRef } from "@/types";
 import type { Booking, Venue, Menu, BookingAddon } from "@/types";
@@ -81,7 +81,7 @@ export function generateDocumentPdf(
   doc.setFontSize(8.5);
   doc.setTextColor(...MUTED);
   doc.text("Datta Hamlet Housing Society, Abbottabad-Mansehra Road, Mansehra", margin + 58, y + 17);
-  doc.text(`${cfg.heading} — Ref ${bookingRef(booking)}`, margin + 58, y + 29);
+  doc.text(`Ref ${bookingRef(booking)}`, margin + 58, y + 29);
 
   doc.setFontSize(8);
   doc.setTextColor(...MUTED);
@@ -91,7 +91,21 @@ export function generateDocumentPdf(
   doc.setDrawColor(...GOLD);
   doc.setLineWidth(1.1);
   doc.line(margin, y, pageW - margin, y);
-  y += 14;
+  y += 26;
+
+  // The document type (Agreement / Invoice / Quotation) is the single most
+  // important thing on the page for the reader to identify at a glance, so
+  // it gets its own large, bold, centered heading — not buried in small
+  // print next to the reference number.
+  doc.setFont("times", "bold");
+  doc.setFontSize(23);
+  doc.setTextColor(...GOLD);
+  doc.text(cfg.heading.toUpperCase(), pageW / 2, y, { align: "center" });
+  y += 9;
+  doc.setDrawColor(...GOLD);
+  doc.setLineWidth(0.9);
+  doc.line(pageW / 2 - 64, y, pageW / 2 + 64, y);
+  y += 18;
 
   doc.setFont("helvetica", "italic");
   doc.setFontSize(8.5);
@@ -101,10 +115,13 @@ export function generateDocumentPdf(
   y += subLines.length * 10 + 8;
 
   const contactLine = booking.phone2 ? `${booking.phone || "-"}  /  ${booking.phone2}` : booking.phone || "-";
-  const menuLine = booking.is_custom_menu
+  const isEntryTest = booking.function_type === "Entry Test";
+  const menuLine = isEntryTest
+    ? `${money(ENTRY_TEST_RATE)} / head — no menu (Entry Test)`
+    : booking.is_custom_menu
     ? "Customized Menu — see itemized list below"
     : menu
-    ? `${menu.name} — ${menu.items}`
+    ? `${menu.name} — ${effectiveMenuItems(menu.items, booking.removed_menu_items).join(", ")}`
     : "-";
 
   const details: [string, string][] = [
@@ -117,9 +134,12 @@ export function generateDocumentPdf(
     ["Function Date", `${fmtDMY(booking.event_date)}`],
     ["Session / Timing", `${booking.session} — ${SESSION_TIMES[booking.session]}`],
     ["Nature of Function", functionLabel(booking)],
-    ["Guaranteed No. of Guests", String(booking.guests)],
-    ["Menu", menuLine],
   ];
+  if (isEntryTest) details.push(["Entry Test Type", booking.entry_test_type || "-"]);
+  details.push(
+    ["Guaranteed No. of Guests", String(booking.guests)],
+    [isEntryTest ? "Rate" : "Menu", menuLine]
+  );
   if (booking.reference) details.push(["Discount Reference", booking.reference]);
   details.push(["Filer Status", booking.filer]);
   if (docType !== "Quotation") details.push(["Status", booking.status]);
@@ -139,7 +159,9 @@ export function generateDocumentPdf(
 
   // Itemized add-ons / customized menu list, if any were selected — shown on
   // every document type so the exact menu makeup is always visible on paper.
-  if (addons.length > 0) {
+  if (isEntryTest) {
+    // No menu to itemize — Entry Test bookings are a flat per-head fee.
+  } else if (addons.length > 0) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(...DARK);
@@ -159,8 +181,9 @@ export function generateDocumentPdf(
     // @ts-ignore
     y = doc.lastAutoTable.finalY + 18;
   } else if (!booking.is_custom_menu && menu) {
-    // No add-ons selected — still print the fixed menu's included items so
-    // every document shows exactly what's being served, not just its name.
+    // No add-ons selected — still print the fixed menu's included items
+    // (minus anything removed from this booking) so every document shows
+    // exactly what's being served, not just the menu's name.
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     doc.setTextColor(...DARK);
@@ -169,7 +192,7 @@ export function generateDocumentPdf(
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(60, 55, 45);
-    const menuItemLines = doc.splitTextToSize(menu.items, pageW - margin * 2);
+    const menuItemLines = doc.splitTextToSize(effectiveMenuItems(menu.items, booking.removed_menu_items).join(", "), pageW - margin * 2);
     doc.text(menuItemLines, margin, y);
     y += menuItemLines.length * 10 + 14;
   }
@@ -180,7 +203,9 @@ export function generateDocumentPdf(
   doc.text("Charges", margin, y);
   y += 8;
 
-  const foodLabel = booking.is_custom_menu
+  const foodLabel = isEntryTest
+    ? `Entry Test Fee (${booking.guests} x ${money(ENTRY_TEST_RATE)})`
+    : booking.is_custom_menu
     ? "Customized Menu Total"
     : t.addonsTotal > 0
     ? `Food Subtotal (${booking.guests} x ${money((menu?.rate || 0))}, incl. extra items)`
@@ -188,13 +213,14 @@ export function generateDocumentPdf(
 
   const charges: [string, string, string][] = [
     [foodLabel, "", money(t.foodSubtotal)],
-    ["Discount", "", "- " + money(t.discountAmount)],
     ["KPRA Tax", "15%", "+ " + money(t.kprTax)],
     ["Hall Charge", t.hallCharge ? (venueList.length > 1 ? "Both halls" : "Applied") : "Waived (200+ guests)", "+ " + money(t.hallCharge)],
     ["Decoration", "", "+ " + money(t.decoration)],
     ["Cooling", booking.cooling ? "Yes" : "No", "+ " + money(t.coolingCharge)],
     ["Heating", `${booking.heaters} heater(s)`, "+ " + money(t.heatingCharge)],
     ["Income Tax", `${booking.filer}, ${t.incomeTaxRate * 100}%`, "+ " + money(t.incomeTax)],
+    ["Total (before discount)", "", money(t.totalBeforeDiscount)],
+    ["Discount", "", "- " + money(t.discountAmount)],
   ];
   if (docType !== "Quotation") {
     charges.push(["Advance Paid", "", "- " + money(booking.advance)]);
