@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
-import { SESSION_TIMES } from "@/lib/constants";
+import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "@/lib/calculations";
+import { SESSION_TIMES, ENTRY_TEST_RATE } from "@/lib/constants";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { generateDocumentPdf } from "@/lib/generateAgreementPdf";
 import AlertModal from "@/components/AlertModal";
@@ -49,6 +49,7 @@ export default function BookingDetailPage() {
   const venueList = booking.venues.map((id) => venues.find((v) => v.id === id)).filter((v): v is Venue => Boolean(v));
   const t = chargesFromBooking(booking, venues, menus);
   const isCancelled = booking.status === "Cancelled";
+  const isEntryTest = booking.function_type === "Entry Test";
 
   async function handleDownloadPdf(docType: "Agreement" | "Invoice" | "Quotation") {
     let logoDataUri: string | undefined;
@@ -133,8 +134,23 @@ export default function BookingDetailPage() {
           <Row k="Function Date" v={fmtDMY(booking.event_date)} />
           <Row k="Session / Timing" v={`${booking.session} — ${SESSION_TIMES[booking.session]}`} />
           <Row k="Nature of Function" v={functionLabel(booking)} />
+          {isEntryTest && <Row k="Entry Test Type" v={booking.entry_test_type || "—"} />}
           <Row k="Guaranteed No. of Guests" v={String(booking.guests)} />
-          <Row k="Menu" v={booking.is_custom_menu ? "Customized Menu (see items below)" : menu ? `${menu.name} — ${menu.items}` : "—"} />
+          <Row
+            k={isEntryTest ? "Entry Test Rate" : "Menu"}
+            v={
+              isEntryTest
+                ? `${money(ENTRY_TEST_RATE)} / head — no menu`
+                : booking.is_custom_menu
+                ? "Customized Menu (see items below)"
+                : menu
+                ? `${menu.name} — ${effectiveMenuItems(menu.items, booking.removed_menu_items).join(", ")}`
+                : "—"
+            }
+          />
+          {!isEntryTest && !booking.is_custom_menu && (booking.removed_menu_items || []).length > 0 && (
+            <Row k="Removed From Menu" v={(booking.removed_menu_items || []).join(", ")} />
+          )}
           {booking.reference && <Row k="Discount Reference" v={booking.reference} />}
           <Row k="Filer Status" v={booking.filer} />
           <Row k="Status" v={booking.status} />
@@ -163,11 +179,13 @@ export default function BookingDetailPage() {
         <div className="bg-primary-dim rounded-lg p-4 mt-4 grid grid-cols-2 gap-2 text-[12.5px]">
           <div className="col-span-2 text-[10.5px] uppercase tracking-wide font-bold text-gold-deep opacity-70">Charges</div>
           <div className="text-gold-deep opacity-85">
-            {booking.is_custom_menu ? "Customized Menu Total" : `Food Subtotal (${booking.guests} × ${money(menu?.rate || 0)}${t.addonsTotal > 0 ? ", incl. extras" : ""})`}
+            {isEntryTest
+              ? `Entry Test Fee (${booking.guests} × ${money(ENTRY_TEST_RATE)})`
+              : booking.is_custom_menu
+              ? "Customized Menu Total"
+              : `Food Subtotal (${booking.guests} × ${money(menu?.rate || 0)}${t.addonsTotal > 0 ? ", incl. extras" : ""})`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(t.foodSubtotal)}</div>
-          <div className="text-gold-deep opacity-85">Discount</div>
-          <div className="text-right font-bold text-gold-deep">- {money(t.discountAmount)}</div>
           <div className="text-gold-deep opacity-85">KPRA Tax (15%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(t.kprTax)}</div>
           <div className="text-gold-deep opacity-85">
@@ -182,6 +200,12 @@ export default function BookingDetailPage() {
           <div className="text-right font-bold text-gold-deep">+ {money(t.heatingCharge)}</div>
           <div className="text-gold-deep opacity-85">Income Tax ({booking.filer}, {t.incomeTaxRate * 100}%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(t.incomeTax)}</div>
+          <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-1.5 mt-0.5 flex justify-between text-[13px] font-bold text-gold-deep">
+            <span>Total (before discount)</span>
+            <span>{money(t.totalBeforeDiscount)}</span>
+          </div>
+          <div className="text-gold-deep opacity-85">Discount</div>
+          <div className="text-right font-bold text-gold-deep">- {money(t.discountAmount)}</div>
           <div className="text-gold-deep opacity-85">Advance Paid</div>
           <div className="text-right font-bold text-gold-deep">- {money(booking.advance)}</div>
           <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-2 mt-1 flex justify-between text-base font-bold text-primary">
