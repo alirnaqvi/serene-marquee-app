@@ -86,11 +86,13 @@ export type Booking = {
   email: string | null;
   function_type: string;
   function_type_other: string | null;
+  entry_test_type: string | null; // e.g. "MDCAT", "ECAT" — only used when function_type === "Entry Test"
   guests: number;
   menu_id: string | null;
   is_custom_menu: boolean;
   custom_menu_total: number;
   addons_total: number; // extra items added on top of a regular menu's per-head rate
+  removed_menu_items: string[] | null; // items unchecked from the selected offered menu's included list
   discount: number; // flat Rs. amount (not a percentage)
   reference: string | null;
   filer: FilerStatus;
@@ -138,5 +140,12 @@ export const FUNCTION_TYPES = [
   "Engagement",
   "Birthday Party",
   "Corporate Event",
+  "Entry Test",
   "Other",
 ] as const;
+
+// Entry Test bookings skip menu selection entirely — everyone is charged
+// this flat per-head rate instead (see ENTRY_TEST_RATE in lib/constants).
+export function isEntryTestFunction(functionType: string): boolean {
+  return functionType === "Entry Test";
+}
