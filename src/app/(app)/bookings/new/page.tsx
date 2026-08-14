@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { calcTotals, money } from "@/lib/calculations";
-import { TOKEN_MINIMUM } from "@/lib/constants";
+import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
+import { TOKEN_MINIMUM, ENTRY_TEST_RATE } from "@/lib/constants";
 import { FUNCTION_TYPES } from "@/types";
 import type { Venue, Menu, Booking, AddonItem } from "@/types";
 import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
@@ -42,6 +42,7 @@ export default function NewBookingPage() {
   const [date, setDate] = useState(presetDate || todayIso());
   const [functionType, setFunctionType] = useState<string>(FUNCTION_TYPES[0]);
   const [functionTypeOther, setFunctionTypeOther] = useState("");
+  const [entryTestType, setEntryTestType] = useState("");
   const [client, setClient] = useState("");
   const [phone, setPhone] = useState("");
   const [phone2, setPhone2] = useState("");
@@ -53,6 +54,7 @@ export default function NewBookingPage() {
   const [customSelection, setCustomSelection] = useState<CustomSelection[]>([]);
   const [showAddOnsModal, setShowAddOnsModal] = useState(false);
   const [addOnSelection, setAddOnSelection] = useState<CustomSelection[]>([]);
+  const [removedMenuItems, setRemovedMenuItems] = useState<string[]>([]);
   const [discount, setDiscount] = useState<NumField>("");
   const [reference, setReference] = useState("");
   const [filer, setFiler] = useState<"Filer" | "Non-Filer">("Filer");
@@ -63,7 +65,8 @@ export default function NewBookingPage() {
   const [status, setStatus] = useState<"Tentative" | "Confirmed">("Confirmed");
   const [notes, setNotes] = useState("");
 
-  const isCustomMenu = menuId === CUSTOM_MENU_VALUE;
+  const isEntryTest = functionType === "Entry Test";
+  const isCustomMenu = !isEntryTest && menuId === CUSTOM_MENU_VALUE;
   const customMenuTotal = customSelection.reduce((s, c) => s + c.unit_price * c.quantity, 0);
   const addOnsTotal = addOnSelection.reduce((s, c) => s + c.unit_price * c.quantity, 0);
   const selectedMenu = menus.find((m) => m.id === menuId);
@@ -102,10 +105,29 @@ export default function NewBookingPage() {
 
   function handleMenuChange(value: string) {
     setMenuId(value);
+    setRemovedMenuItems([]); // a different offered menu has a different item list
     if (value === CUSTOM_MENU_VALUE) {
       setAddOnSelection([]); // custom-replace and additive add-ons are mutually exclusive
       setShowCustomMenuModal(true);
     }
+  }
+
+  function handleFunctionTypeChange(value: string) {
+    setFunctionType(value);
+    if (value === "Entry Test") {
+      // Entry Test bookings don't use any menu — clear out any prior selection.
+      setMenuId("");
+      setCustomSelection([]);
+      setAddOnSelection([]);
+      setRemovedMenuItems([]);
+    } else if (functionType === "Entry Test") {
+      setEntryTestType("");
+      if (menus.length) setMenuId(menus[0].id);
+    }
+  }
+
+  function toggleMenuItem(item: string) {
+    setRemovedMenuItems((prev) => (prev.includes(item) ? prev.filter((i) => i !== item) : [...prev, item]));
   }
 
   const conflicts = selectedVenues
@@ -135,8 +157,9 @@ export default function NewBookingPage() {
       venues: selectedVenues,
       menuId: isCustomMenu ? null : menuId,
       isCustomMenu,
+      isEntryTest,
       customMenuTotal,
-      addonsTotal: isCustomMenu ? 0 : addOnsTotal,
+      addonsTotal: isCustomMenu || isEntryTest ? 0 : addOnsTotal,
       discount: n(discount),
       filer,
       decoration: n(decoration),
@@ -156,6 +179,9 @@ export default function NewBookingPage() {
     if (selectedVenues.length === 0) return setError("Please select at least one venue.");
     if (isCustomMenu && customSelection.length === 0) {
       return setError("Please pick at least one item for the Customized Menu, or choose a regular menu instead.");
+    }
+    if (isEntryTest && !entryTestType.trim()) {
+      return setError("Please enter the type of entry test (e.g. MDCAT, ECAT).");
     }
     if (conflicts.length > 0) {
       setConflictAlert(conflictMessage());
@@ -180,11 +206,13 @@ export default function NewBookingPage() {
         email,
         function_type: functionType,
         function_type_other: functionType === "Other" ? functionTypeOther : null,
+        entry_test_type: isEntryTest ? entryTestType.trim() : null,
         guests: n(guests),
-        menu_id: isCustomMenu ? null : menuId,
+        menu_id: isEntryTest || isCustomMenu ? null : menuId,
         is_custom_menu: isCustomMenu,
         custom_menu_total: isCustomMenu ? customMenuTotal : 0,
-        addons_total: isCustomMenu ? 0 : addOnsTotal,
+        addons_total: isCustomMenu || isEntryTest ? 0 : addOnsTotal,
+        removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
         discount: n(discount),
         reference,
         filer,
@@ -284,7 +312,7 @@ export default function NewBookingPage() {
 
           <div>
             <label className="text-xs font-bold text-muted uppercase">Function Type</label>
-            <select className="w-full mt-1" value={functionType} onChange={(e) => setFunctionType(e.target.value)}>
+            <select className="w-full mt-1" value={functionType} onChange={(e) => handleFunctionTypeChange(e.target.value)}>
               {FUNCTION_TYPES.map((t) => (
                 <option key={t}>{t}</option>
               ))}
@@ -298,6 +326,17 @@ export default function NewBookingPage() {
                 value={functionTypeOther}
                 onChange={(e) => setFunctionTypeOther(e.target.value)}
                 placeholder="e.g. Aqeeqah, Anniversary..."
+              />
+            </div>
+          )}
+          {isEntryTest && (
+            <div>
+              <label className="text-xs font-bold text-muted uppercase">Type of Entry Test</label>
+              <input
+                className="w-full mt-1"
+                value={entryTestType}
+                onChange={(e) => setEntryTestType(e.target.value)}
+                placeholder="e.g. MDCAT, ECAT, NUST NET"
               />
             </div>
           )}
@@ -327,10 +366,12 @@ export default function NewBookingPage() {
           </div>
 
           <div className="col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
-            Menu & Guests
+            {isEntryTest ? "Entry Test & Guests" : "Menu & Guests"}
           </div>
           <div>
-            <label className="text-xs font-bold text-muted uppercase">Guest Count</label>
+            <label className="text-xs font-bold text-muted uppercase">
+              {isEntryTest ? "Number of Guests (Students)" : "Guest Count"}
+            </label>
             <input
               type="number"
               className="w-full mt-1"
@@ -339,43 +380,81 @@ export default function NewBookingPage() {
               onChange={(e) => setGuests(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
-          <div>
-            <label className="text-xs font-bold text-muted uppercase">Menu</label>
-            <select className="w-full mt-1" value={menuId} onChange={(e) => handleMenuChange(e.target.value)}>
-              {menus.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} — {money(m.rate)}/head
-                </option>
-              ))}
-              <option value={CUSTOM_MENU_VALUE}>Customized Menu… (build entirely from add-ons)</option>
-            </select>
-            {!isCustomMenu && selectedMenu && (
-              <div className="mt-1.5 text-[11.5px] text-muted leading-snug">Includes: {selectedMenu.items}</div>
-            )}
-            {isCustomMenu && (
-              <div className="mt-1.5 flex items-center justify-between text-[12px] bg-gold-light border border-gold rounded-md px-2.5 py-1.5">
-                <span className="text-gold-deep font-semibold">
-                  {customSelection.length} item{customSelection.length === 1 ? "" : "s"} selected — {money(customMenuTotal)}
-                </span>
-                <button type="button" onClick={() => setShowCustomMenuModal(true)} className="text-gold-deep font-bold underline">
-                  Edit
-                </button>
+          {isEntryTest ? (
+            <div>
+              <label className="text-xs font-bold text-muted uppercase">
+                Rate <span className="normal-case font-normal">(fixed for all entry tests)</span>
+              </label>
+              <div className="w-full mt-1 text-sm font-semibold text-gold-deep px-3 py-2 border border-border rounded-lg bg-bg">
+                {money(ENTRY_TEST_RATE)} / head
               </div>
-            )}
-            {!isCustomMenu && (
-              <div className="mt-1.5">
-                <button
-                  type="button"
-                  onClick={() => setShowAddOnsModal(true)}
-                  className="text-[12px] font-bold text-gold-deep underline"
-                >
-                  {addOnSelection.length > 0
-                    ? `${addOnSelection.length} extra item${addOnSelection.length === 1 ? "" : "s"} added — ${money(addOnsTotal)}/head extra — Edit`
-                    : "+ Customize this menu (add extra items)"}
-                </button>
-              </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div>
+              <label className="text-xs font-bold text-muted uppercase">Menu</label>
+              <select className="w-full mt-1" value={menuId} onChange={(e) => handleMenuChange(e.target.value)}>
+                {menus.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} — {money(m.rate)}/head
+                  </option>
+                ))}
+                <option value={CUSTOM_MENU_VALUE}>Customized Menu… (build entirely from add-ons)</option>
+              </select>
+              {!isCustomMenu && selectedMenu && (
+                <div className="mt-1.5 text-[11.5px] text-muted leading-snug">
+                  <div className="mb-1">Includes (tap × to remove an item for this booking):</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {parseMenuItems(selectedMenu.items).map((item) => {
+                      const removed = removedMenuItems.includes(item);
+                      return (
+                        <span
+                          key={item}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${
+                            removed
+                              ? "border-border text-muted line-through opacity-60"
+                              : "border-gold bg-gold-light text-gold-deep"
+                          }`}
+                        >
+                          {item}
+                          <button
+                            type="button"
+                            onClick={() => toggleMenuItem(item)}
+                            className="font-bold leading-none"
+                            title={removed ? "Add back to menu" : "Remove from menu"}
+                          >
+                            {removed ? "+" : "×"}
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {isCustomMenu && (
+                <div className="mt-1.5 flex items-center justify-between text-[12px] bg-gold-light border border-gold rounded-md px-2.5 py-1.5">
+                  <span className="text-gold-deep font-semibold">
+                    {customSelection.length} item{customSelection.length === 1 ? "" : "s"} selected — {money(customMenuTotal)}
+                  </span>
+                  <button type="button" onClick={() => setShowCustomMenuModal(true)} className="text-gold-deep font-bold underline">
+                    Edit
+                  </button>
+                </div>
+              )}
+              {!isCustomMenu && (
+                <div className="mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddOnsModal(true)}
+                    className="text-[12px] font-bold text-gold-deep underline"
+                  >
+                    {addOnSelection.length > 0
+                      ? `${addOnSelection.length} extra item${addOnSelection.length === 1 ? "" : "s"} added — ${money(addOnsTotal)}/head extra — Edit`
+                      : "+ Customize this menu (add extra items)"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label className="text-xs font-bold text-muted uppercase">Discount (Rs.)</label>
             <input
@@ -458,10 +537,12 @@ export default function NewBookingPage() {
         </div>
 
         <div className="bg-primary-dim rounded-lg p-4 mt-4 grid grid-cols-2 gap-2 text-[12.5px]">
-          <div className="text-gold-deep opacity-85">Food Subtotal{isCustomMenu ? " (Customized Menu)" : addOnsTotal > 0 ? " (incl. extra items)" : ""}</div>
+          <div className="text-gold-deep opacity-85">
+            {isEntryTest
+              ? `Entry Test Fee (${n(guests)} × ${money(ENTRY_TEST_RATE)})`
+              : `Food Subtotal${isCustomMenu ? " (Customized Menu)" : addOnsTotal > 0 ? " (incl. extra items)" : ""}`}
+          </div>
           <div className="text-right font-bold text-gold-deep">{money(totals.foodSubtotal)}</div>
-          <div className="text-gold-deep opacity-85">Discount</div>
-          <div className="text-right font-bold text-gold-deep">- {money(totals.discountAmount)}</div>
           <div className="text-gold-deep opacity-85">KPRA Tax (15%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.kprTax)}</div>
           <div className="text-gold-deep opacity-85">Hall Charge{selectedVenues.length > 1 ? " (both halls)" : ""}</div>
@@ -472,6 +553,12 @@ export default function NewBookingPage() {
           <div className="text-right font-bold text-gold-deep">+ {money(totals.coolingCharge + totals.heatingCharge)}</div>
           <div className="text-gold-deep opacity-85">Income Tax ({filer}, {totals.incomeTaxRate * 100}%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.incomeTax)}</div>
+          <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-1.5 mt-0.5 flex justify-between text-[13px] font-bold text-gold-deep">
+            <span>Total (before discount)</span>
+            <span>{money(totals.totalBeforeDiscount)}</span>
+          </div>
+          <div className="text-gold-deep opacity-85">Discount</div>
+          <div className="text-right font-bold text-gold-deep">- {money(totals.discountAmount)}</div>
           <div className="text-gold-deep opacity-85">Advance Paid</div>
           <div className="text-right font-bold text-gold-deep">- {money(n(advance))}</div>
           <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-2 mt-1 flex justify-between text-base font-bold text-primary">
