@@ -4,6 +4,7 @@ export const COOLING_CHARGE_PER_HALL = 100000; // Rs. per hall
 export const HEATER_CHARGE = 8000; // Rs. per heater
 export const TOKEN_MINIMUM = 50000; // Rs. non-refundable token to confirm a booking
 export const EXTRA_HOUR_CHARGE = 25000; // Rs. per additional hour beyond the 4-hour slot
+export const ENTRY_TEST_RATE = 600; // Rs. per head, flat — no menu/offered items involved
 
 export function incomeTaxRate(filer: "Filer" | "Non-Filer"): number {
   return filer === "Filer" ? 0.1 : 0.2;
