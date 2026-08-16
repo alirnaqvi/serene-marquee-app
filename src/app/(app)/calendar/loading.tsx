@@ -7,11 +7,11 @@ export default function Loading() {
         <SkelBar w={140} h={20} />
         <SkelBar w={90} h={28} />
       </div>
-      <div className="grid grid-cols-7 gap-2">
+      <div className="overflow-x-auto -mx-1"><div className="grid grid-cols-7 gap-2 min-w-[640px] px-1">
         {Array.from({ length: 35 }).map((_, i) => (
           <SkelBar key={i} h={64} />
         ))}
-      </div>
+      </div></div>
     </SkelCard>
   );
 }
