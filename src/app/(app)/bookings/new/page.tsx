@@ -282,7 +282,7 @@ export default function NewBookingPage() {
 
       <div className="card">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="text-xs font-bold text-muted uppercase">
               Venue(s) <span className="normal-case font-normal text-muted">— select more than one for a two-hall event</span>
             </label>
@@ -343,7 +343,7 @@ export default function NewBookingPage() {
             </div>
           )}
 
-          <div className="col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
+          <div className="sm:col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
             Host Details
           </div>
           <div>
@@ -362,12 +362,12 @@ export default function NewBookingPage() {
             <label className="text-xs font-bold text-muted uppercase">CNIC <span className="text-rose">*</span></label>
             <input className="w-full mt-1" value={cnic} onChange={(e) => setCnic(e.target.value)} placeholder="XXXXX-XXXXXXX-X" required />
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="text-xs font-bold text-muted uppercase">Email (optional)</label>
             <input className="w-full mt-1" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
 
-          <div className="col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
+          <div className="sm:col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
             {isEntryTest ? "Entry Test & Guests" : "Menu & Guests"}
           </div>
           <div>
@@ -474,12 +474,12 @@ export default function NewBookingPage() {
               <option>Non-Filer</option>
             </select>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="text-xs font-bold text-muted uppercase">Discount Reference / Given By</label>
             <input className="w-full mt-1" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="e.g. Referred by M. Javed" />
           </div>
 
-          <div className="col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
+          <div className="sm:col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
             Charges (finalized in office)
           </div>
           <div>
@@ -502,12 +502,12 @@ export default function NewBookingPage() {
               onChange={(e) => setHeaters(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
-          <div className="col-span-2 flex items-center gap-2 text-sm">
+          <div className="sm:col-span-2 flex items-center gap-2 text-sm">
             <input type="checkbox" checked={cooling} onChange={(e) => setCooling(e.target.checked)} />
             Cooling required (+Rs. 100,000 per hall selected)
           </div>
 
-          <div className="col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
+          <div className="sm:col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
             Payment
           </div>
           <div>
@@ -529,7 +529,7 @@ export default function NewBookingPage() {
               <option>Confirmed</option>
             </select>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="text-xs font-bold text-muted uppercase">
               Special Instructions / Decoration Details{" "}
               <span className="normal-case font-normal">(no length limit — write as much as you need)</span>
