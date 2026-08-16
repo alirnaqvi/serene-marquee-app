@@ -48,7 +48,7 @@ export default async function MenusPage() {
         {(venues || []).map((v) => (
           <div key={v.id} className="card">
             <div className="text-[14.5px] font-bold text-primary mb-2">{v.name}</div>
-            <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[560px] text-[13px]">
+            <table className="w-full text-[13px]">
               <tbody>
                 <tr>
                   <td className="text-muted py-1">Capacity</td>
@@ -67,7 +67,7 @@ export default async function MenusPage() {
                   <td className="text-right font-bold py-1">{money(v.decoration_from)}</td>
                 </tr>
               </tbody>
-            </table></div>
+            </table>
           </div>
         ))}
       </div>
@@ -80,7 +80,7 @@ export default async function MenusPage() {
         {addonCategories.map(([category, catItems]) => (
           <div key={category} className="card">
             <div className="text-[13.5px] font-bold text-primary mb-2.5">{category}</div>
-            <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[560px] text-[12.5px]">
+            <table className="w-full text-[12.5px]">
               <tbody>
                 {catItems.map((item) => (
                   <tr key={item.id} className="border-b border-border last:border-0">
@@ -92,14 +92,14 @@ export default async function MenusPage() {
                   </tr>
                 ))}
               </tbody>
-            </table></div>
+            </table>
           </div>
         ))}
       </div>
 
       <div className="card">
         <div className="text-[14.5px] font-bold text-primary mb-3">Other Charges (owner rules)</div>
-        <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[560px] text-[13px]">
+        <table className="w-full text-[13px]">
           <tbody>
             <tr className="border-b border-border">
               <td className="py-2">KPRA Tax on food</td>
@@ -130,7 +130,7 @@ export default async function MenusPage() {
               <td className="text-right font-bold py-2">{money(EXTRA_HOUR_CHARGE)} / hr</td>
             </tr>
           </tbody>
-        </table></div>
+        </table>
       </div>
     </div>
   );
