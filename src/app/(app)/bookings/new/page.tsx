@@ -174,6 +174,8 @@ export default function NewBookingPage() {
   async function handleSave() {
     setError(null);
     if (!client.trim()) return setError("Please enter a client name.");
+    if (!phone.trim()) return setError("Please enter a phone number.");
+    if (!cnic.trim()) return setError("Please enter the host's CNIC.");
     if (!date) return setError("Please choose a function date.");
     if (date < todayIso()) return setError("You can't book a date that has already passed. Please choose today or a future date.");
     if (selectedVenues.length === 0) return setError("Please select at least one venue.");
@@ -345,20 +347,20 @@ export default function NewBookingPage() {
             Host Details
           </div>
           <div>
-            <label className="text-xs font-bold text-muted uppercase">Client / Host Name</label>
-            <input className="w-full mt-1" value={client} onChange={(e) => setClient(e.target.value)} placeholder="e.g. Ahmed Family" />
+            <label className="text-xs font-bold text-muted uppercase">Client / Host Name <span className="text-rose">*</span></label>
+            <input className="w-full mt-1" value={client} onChange={(e) => setClient(e.target.value)} placeholder="e.g. Ahmed Family" required />
           </div>
           <div>
-            <label className="text-xs font-bold text-muted uppercase">Phone Number</label>
-            <input className="w-full mt-1" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="03XX-XXXXXXX" />
+            <label className="text-xs font-bold text-muted uppercase">Phone Number <span className="text-rose">*</span></label>
+            <input className="w-full mt-1" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="03XX-XXXXXXX" required />
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Second Phone Number <span className="normal-case font-normal">(optional)</span></label>
             <input className="w-full mt-1" value={phone2} onChange={(e) => setPhone2(e.target.value)} placeholder="03XX-XXXXXXX" />
           </div>
           <div>
-            <label className="text-xs font-bold text-muted uppercase">CNIC</label>
-            <input className="w-full mt-1" value={cnic} onChange={(e) => setCnic(e.target.value)} placeholder="XXXXX-XXXXXXX-X" />
+            <label className="text-xs font-bold text-muted uppercase">CNIC <span className="text-rose">*</span></label>
+            <input className="w-full mt-1" value={cnic} onChange={(e) => setCnic(e.target.value)} placeholder="XXXXX-XXXXXXX-X" required />
           </div>
           <div className="col-span-2">
             <label className="text-xs font-bold text-muted uppercase">Email (optional)</label>
