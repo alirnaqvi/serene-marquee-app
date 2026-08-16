@@ -119,7 +119,7 @@ export default function LedgerPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4 my-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 my-4">
         <div className="card">
           <div className="text-[11.5px] text-muted uppercase font-semibold">Total Income</div>
           <div className="text-2xl font-bold font-serif text-gold-deep mt-1.5">{money(income)}</div>
@@ -140,7 +140,7 @@ export default function LedgerPage() {
 
       {showForm && (
         <div className="card mb-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-bold text-muted uppercase">Date</label>
               <DateField value={date} onChange={setDate} className="mt-1" />
