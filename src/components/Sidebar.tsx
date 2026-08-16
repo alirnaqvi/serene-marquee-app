@@ -64,7 +64,7 @@ export default function Sidebar({
   }
 
   return (
-    <div className="w-64 sm:w-60 h-screen shrink-0 flex flex-col p-4 bg-gradient-to-b from-[#18150F] via-[#141210] to-[#0F0D0A] text-[#EAE3CC] border-r border-[#2A2620] overflow-y-auto">
+    <div className="w-64 sm:w-60 h-full shrink-0 flex flex-col p-4 bg-gradient-to-b from-[#18150F] via-[#141210] to-[#0F0D0A] text-[#EAE3CC] border-r border-[#2A2620] overflow-y-auto">
       <div className="flex items-center gap-2.5 pb-4 mb-3 border-b border-gold/20 px-1">
         <img src="/logo.png" alt="Serene Marquee" className="w-10 h-10 rounded-xl shadow-lg ring-1 ring-gold/30" />
         <div>
