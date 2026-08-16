@@ -147,7 +147,7 @@ export default function SalariesPage() {
         </select>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 my-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 my-4">
         <div className="card">
           <div className="text-[11.5px] text-muted uppercase font-semibold">Total Monthly Payroll</div>
           <div className="text-2xl font-bold font-serif mt-1.5">{money(totalPayroll)}</div>
