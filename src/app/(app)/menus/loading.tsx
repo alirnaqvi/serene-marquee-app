@@ -2,7 +2,7 @@ import { SkelCard, SkelBar } from "@/components/Skeleton";
 
 export default function Loading() {
   return (
-    <div className="grid grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {Array.from({ length: 6 }).map((_, i) => (
         <SkelCard key={i}>
           <SkelBar w="70%" h={16} className="mb-3" />
