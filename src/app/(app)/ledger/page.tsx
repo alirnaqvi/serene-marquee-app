@@ -152,7 +152,7 @@ export default function LedgerPage() {
                 <option value="expense">Expense</option>
               </select>
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <label className="text-xs font-bold text-muted uppercase">Description</label>
               <input className="w-full mt-1" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="e.g. Grocery purchase" />
             </div>
