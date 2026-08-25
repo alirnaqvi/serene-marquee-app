@@ -69,6 +69,44 @@ export const STAFF_VIEW_ROLES: Role[] = ["owner", "admin", "developer"];
 // watching over the system/staff rather than doing bookings day-to-day.
 export const DEVELOPER_ROLES: Role[] = ["developer"];
 
+// ---------------------------------------------------------------------------
+// MONITOR-ONLY ROLES
+// Owner / CEO accounts (Mahmud Ali Shah, Afeefa Batool) can see everything
+// they could before, but cannot create, edit or delete anything anywhere in
+// the app. The UI hides every write control for them; RLS in the database
+// blocks the writes as well, so this holds even if the UI is bypassed.
+// ---------------------------------------------------------------------------
+export const READ_ONLY_ROLES: Role[] = ["owner"];
+
+export function isReadOnlyRole(role: Role): boolean {
+  return READ_ONLY_ROLES.includes(role);
+}
+
+// ---------------------------------------------------------------------------
+// DISCOUNT AUTHORITY — flat Rs. ceiling on the discount a role may put on a
+// single booking. Infinity means "no limit". Mirrored by the
+// enforce_discount_limit() trigger in the database.
+// ---------------------------------------------------------------------------
+export const DISCOUNT_LIMITS: Record<Role, number> = {
+  owner: 0,             // monitor only
+  staff: 0,
+  manager: 30000,       // currently Zain Syed
+  general_manager: 50000, // currently Ikram Abbasi
+  admin: Infinity,
+  developer: Infinity,
+};
+
+export function discountLimitFor(role: Role): number {
+  return DISCOUNT_LIMITS[role] ?? 0;
+}
+
+export function discountLimitLabel(role: Role): string {
+  const lim = discountLimitFor(role);
+  if (lim === Infinity) return "No limit";
+  if (lim === 0) return "Not permitted";
+  return "Rs. " + lim.toLocaleString("en-PK") + " per booking";
+}
+
 export type BookingStatus = "Tentative" | "Confirmed" | "Cancelled";
 export type Session = "Lunch" | "Dinner";
 export type FilerStatus = "Filer" | "Non-Filer";
@@ -100,6 +138,9 @@ export type Booking = {
   cooling: boolean;
   heaters: number;
   advance: number;
+  advance_refunded: boolean; // set when a cancelled booking's advance is returned
+  refund_amount: number;
+  refunded_at: string | null;
   notes: string | null;
   status: BookingStatus;
   created_by: string | null;
@@ -114,6 +155,10 @@ export type LedgerEntry = {
   amount: number;
   booking_id: string | null;
   handed_to: string | null; // for expenses: who received the money
+  employee_id: string | null; // set on payroll entries
+  vendor_id: string | null; // set on vendor payments
+  salary_month: string | null; // 'YYYY-MM' on salary entries
+  category: string | null; // 'salary' | 'advance' | 'vendor' | 'refund' | null
   created_by: string | null;
   created_at: string;
   profiles?: { full_name: string } | null; // joined author name
@@ -124,8 +169,113 @@ export type Employee = {
   full_name: string;
   designation: string;
   monthly_salary: number;
+  phone: string | null;
+  joined_on: string | null;
+  left_on: string | null;
   active: boolean;
   created_at: string;
+};
+
+// An advance or a loan handed to an employee, recovered by a fixed monthly
+// instalment cut from their salary until the full amount is paid back.
+export type EmployeeAdvance = {
+  id: string;
+  employee_id: string;
+  kind: "advance" | "loan";
+  amount: number;
+  monthly_deduction: number;
+  issued_on: string;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+// A one-off change to a single month's pay: a bonus (adds), a deduction
+// (subtracts), or a repayment (subtracts, and is tied to the advance/loan
+// it is paying down).
+export type EmployeeAdjustment = {
+  id: string;
+  employee_id: string;
+  month: string; // 'YYYY-MM'
+  kind: "bonus" | "deduction" | "repayment";
+  amount: number;
+  advance_id: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type SalaryChange = {
+  id: string;
+  employee_id: string;
+  old_salary: number;
+  new_salary: number;
+  effective_from: string;
+  reason: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+// Shop the marquee buys from. Category is the thing supplied (Grocery, Beef,
+// Chicken...); shop_name is the shop currently used for it and is fully
+// editable — today's Faisal Store may be someone else next year.
+export type Vendor = {
+  id: string;
+  category: string;
+  shop_name: string | null;
+  contact: string | null;
+  notes: string | null;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+};
+
+export type TicketStatus = "open" | "in_progress" | "resolved";
+export type TicketPriority = "low" | "normal" | "high" | "urgent";
+
+export type SupportTicket = {
+  id: string;
+  title: string;
+  description: string | null;
+  status: TicketStatus;
+  priority: TicketPriority;
+  category: string | null;
+  related_profile_id: string | null;
+  resolution_note: string | null;
+  resolved_by: string | null;
+  created_by: string | null;
+  created_at: string;
+  resolved_at: string | null;
+};
+
+export type TicketComment = {
+  id: string;
+  issue_id: string;
+  body: string;
+  created_by: string | null;
+  created_at: string;
+};
+
+export const TICKET_CATEGORIES = [
+  "Bug / Not Working",
+  "Wrong Calculation",
+  "Login or Access",
+  "Printing / PDF",
+  "Feature Request",
+  "Other",
+] as const;
+
+export const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  resolved: "Resolved",
+};
+
+export const TICKET_PRIORITY_LABELS: Record<TicketPriority, string> = {
+  low: "Low",
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
 };
 
 export function bookingRef(b: Pick<Booking, "booking_number" | "id">): string {
