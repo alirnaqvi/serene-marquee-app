@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/calculations";
@@ -17,10 +17,8 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 // A transaction with its running balance filled in.
 type LedgerRow = VendorTransaction & { balance: number };
 
-type Modal =
-  | { kind: "vendor"; vendor?: Vendor }
-  | { kind: "entry"; vendor: Vendor }
-  | null;
+// Which cell of which row is currently being typed into.
+type EditCell = { id: string; field: "txn_date" | "description" | "debit" | "credit" } | null;
 
 export default function VendorsPage() {
   const supabase = createClient();
@@ -32,27 +30,33 @@ export default function VendorsPage() {
   const [ledgerBlocked, setLedgerBlocked] = useState(false);
   const [month, setMonth] = useState(currentMonth());
   const [showInactive, setShowInactive] = useState(false);
-  const [modal, setModal] = useState<Modal>(null);
+  const [vendorModal, setVendorModal] = useState<{ vendor?: Vendor } | null>(null);
   const [detailVendor, setDetailVendor] = useState<Vendor | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Vendor | null>(null);
 
-  // vendor form
+  // vendor add/rename form
   const [category, setCategory] = useState("");
   const [shopName, setShopName] = useState("");
   const [contact, setContact] = useState("");
   const [notes, setNotes] = useState("");
 
-  // transaction form — one row of the shop diary
-  const [entryKind, setEntryKind] = useState<"credit" | "debit">("credit");
-  const [entryAmount, setEntryAmount] = useState<NumField>("");
-  const [entryDate, setEntryDate] = useState(todayIso());
-  const [entryDesc, setEntryDesc] = useState("");
-  const [entryToLedger, setEntryToLedger] = useState(true);
-
-  // per-vendor detail view scope
+  // per-vendor detail view
   const [detailScope, setDetailScope] = useState<"month" | "all">("all");
+  const [postToLedger, setPostToLedger] = useState(true);
+
+  // spreadsheet-style entry: one always-present blank row at the bottom
+  const [draftDate, setDraftDate] = useState(todayIso());
+  const [draftDesc, setDraftDesc] = useState("");
+  const [draftDebit, setDraftDebit] = useState<NumField>("");
+  const [draftCredit, setDraftCredit] = useState<NumField>("");
+  const [savingRow, setSavingRow] = useState(false);
+  const draftDateRef = useRef<HTMLInputElement>(null);
+
+  // inline editing of an existing row
+  const [editCell, setEditCell] = useState<EditCell>(null);
+  const [editValue, setEditValue] = useState<string>("");
 
   async function load() {
     const [{ data: v }, { data: t, error: txnError }] = await Promise.all([
@@ -118,8 +122,8 @@ export default function VendorsPage() {
     return user?.id;
   }
 
-  function openVendor(vendor?: Vendor) {
-    setModal({ kind: "vendor", vendor });
+  function openVendorForm(vendor?: Vendor) {
+    setVendorModal({ vendor });
     setCategory(vendor?.category || "");
     setShopName(vendor?.shop_name || "");
     setContact(vendor?.contact || "");
@@ -127,14 +131,18 @@ export default function VendorsPage() {
     setError(null);
   }
 
-  function openEntry(vendor: Vendor, kind: "credit" | "debit" = "credit") {
-    setModal({ kind: "entry", vendor });
-    setEntryKind(kind);
-    setEntryAmount("");
-    setEntryDate(todayIso());
-    setEntryDesc("");
-    setEntryToLedger(true);
-    setError(null);
+  function openDetail(vendor: Vendor) {
+    setDetailVendor(vendor);
+    setDetailScope("all");
+    resetDraft();
+    setEditCell(null);
+  }
+
+  function resetDraft() {
+    setDraftDate(todayIso());
+    setDraftDesc("");
+    setDraftDebit("");
+    setDraftCredit("");
   }
 
   async function saveVendor(existing?: Vendor) {
@@ -159,32 +167,37 @@ export default function VendorsPage() {
       setBusy(false);
       return;
     }
-    setModal(null);
+    setVendorModal(null);
     setBusy(false);
     load();
   }
 
-  async function saveEntry(vendor: Vendor) {
-    if (readOnly) return;
-    if (n(entryAmount) <= 0) return setError("Enter an amount greater than zero.");
-    setBusy(true);
+  // ---- spreadsheet row entry -----------------------------------------
+  async function commitDraft(vendor: Vendor) {
+    if (readOnly || savingRow) return;
+    const debit = n(draftDebit);
+    const credit = n(draftCredit);
+    if (debit <= 0 && credit <= 0) return; // nothing typed yet — ignore silently
+    if (!draftDate) {
+      setError("Enter a date for this row.");
+      return;
+    }
+    setSavingRow(true);
+    setError(null);
     const uid = await currentUserId();
-    const amount = n(entryAmount);
-    const isPayment = entryKind === "debit";
-    const description =
-      entryDesc.trim() || (isPayment ? "Payment made" : `Bill — ${vendor.shop_name || vendor.category}`);
+    const description = draftDesc.trim() || (debit > 0 ? "Payment made" : "Bill received");
 
     // A payment is real money leaving the till, so it also belongs in the
     // daily ledger. A bill received is not — it only affects what we owe.
     let ledgerEntryId: string | null = null;
-    if (isPayment && entryToLedger) {
+    if (debit > 0 && postToLedger) {
       const { data: le } = await supabase
         .from("ledger_entries")
         .insert({
-          entry_date: entryDate,
+          entry_date: draftDate,
           type: "expense",
           description: `${vendor.category} — ${vendor.shop_name || "no name"}: ${description}`,
-          amount,
+          amount: debit,
           handed_to: vendor.shop_name || vendor.category,
           vendor_id: vendor.id,
           category: "vendor",
@@ -197,20 +210,85 @@ export default function VendorsPage() {
 
     const { error: err } = await supabase.from("vendor_transactions").insert({
       vendor_id: vendor.id,
-      txn_date: entryDate,
+      txn_date: draftDate,
       description,
-      debit: isPayment ? amount : 0,
-      credit: isPayment ? 0 : amount,
+      debit,
+      credit,
       ledger_entry_id: ledgerEntryId,
       created_by: uid,
     });
     if (err) {
       setError(err.message);
-      setBusy(false);
+      setSavingRow(false);
       return;
     }
-    setModal(null);
-    setBusy(false);
+
+    // Keep the date so a run of same-day entries can be typed straight down,
+    // clear the rest, and jump the cursor back to the top of the blank row.
+    setDraftDesc("");
+    setDraftDebit("");
+    setDraftCredit("");
+    setSavingRow(false);
+    await load();
+    draftDateRef.current?.focus();
+  }
+
+  // ---- inline editing of an existing row -------------------------------
+  function beginEdit(row: LedgerRow, field: NonNullable<EditCell>["field"]) {
+    if (readOnly) return;
+    setEditCell({ id: row.id, field });
+    const raw =
+      field === "txn_date"
+        ? row.txn_date
+        : field === "description"
+        ? row.description || ""
+        : field === "debit"
+        ? row.debit || ""
+        : row.credit || "";
+    setEditValue(String(raw));
+  }
+
+  async function commitEdit(row: LedgerRow) {
+    if (!editCell || editCell.id !== row.id) return;
+    const field = editCell.field;
+    setEditCell(null);
+
+    const patch: Record<string, string | number | null> = {};
+    if (field === "txn_date") {
+      if (!editValue) return;
+      if (editValue === row.txn_date) return;
+      patch.txn_date = editValue;
+    } else if (field === "description") {
+      if (editValue === (row.description || "")) return;
+      patch.description = editValue.trim() || null;
+    } else {
+      const num = Number(editValue) || 0;
+      if (num === (field === "debit" ? row.debit : row.credit)) return;
+      patch[field] = num;
+    }
+
+    const { error: err } = await supabase.from("vendor_transactions").update(patch).eq("id", row.id);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+
+    // Keep the mirrored ledger expense in step with the row it came from.
+    const newDebit = field === "debit" ? Number(editValue) || 0 : row.debit;
+    if (row.ledger_entry_id) {
+      if (newDebit <= 0) {
+        await supabase.from("ledger_entries").delete().eq("id", row.ledger_entry_id);
+        await supabase.from("vendor_transactions").update({ ledger_entry_id: null }).eq("id", row.id);
+      } else {
+        await supabase
+          .from("ledger_entries")
+          .update({
+            entry_date: field === "txn_date" ? editValue : row.txn_date,
+            amount: newDebit,
+          })
+          .eq("id", row.ledger_entry_id);
+      }
+    }
     load();
   }
 
@@ -332,6 +410,10 @@ export default function VendorsPage() {
 
   if (loading) return <div className="text-muted text-sm">Loading…</div>;
 
+  const cellCls = "py-1.5 px-2 border-r border-border/60 last:border-r-0";
+  const inputCls =
+    "w-full bg-transparent border-0 outline-none focus:ring-1 focus:ring-gold rounded px-1 py-0.5 text-[12.5px]";
+
   return (
     <div>
       <Link href="/ledger" className="text-xs font-bold text-gold-deep hover:underline">
@@ -342,7 +424,8 @@ export default function VendorsPage() {
         <div>
           <div className="text-xl font-bold font-serif text-primary">Vendors</div>
           <div className="text-xs text-muted mt-0.5">
-            The shops the marquee buys from. Click any vendor to open its account diary.
+            The shops the marquee buys from. Click any vendor to open its account and type entries straight
+            into the table.
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -359,7 +442,7 @@ export default function VendorsPage() {
             </button>
           )}
           {!readOnly && (
-            <button onClick={() => openVendor()} className="btn-primary rounded-lg px-4 py-2 text-sm">
+            <button onClick={() => openVendorForm()} className="btn-primary rounded-lg px-4 py-2 text-sm">
               + Add Vendor
             </button>
           )}
@@ -432,7 +515,7 @@ export default function VendorsPage() {
               return (
                 <tr
                   key={v.id}
-                  onClick={() => !ledgerBlocked && (setDetailVendor(v), setDetailScope("all"))}
+                  onClick={() => !ledgerBlocked && openDetail(v)}
                   className={`border-b border-border last:border-0 ${v.active ? "" : "opacity-60"} ${
                     ledgerBlocked ? "" : "cursor-pointer hover:bg-[#FBF8ED]"
                   }`}
@@ -460,23 +543,15 @@ export default function VendorsPage() {
                     <div className="flex gap-1.5 flex-wrap justify-end">
                       {!ledgerBlocked && (
                         <button
-                          onClick={() => (setDetailVendor(v), setDetailScope("all"))}
+                          onClick={() => openDetail(v)}
                           className="btn-ghost rounded-md px-2.5 py-1 text-[11px] whitespace-nowrap"
                         >
-                          View Ledger
-                        </button>
-                      )}
-                      {!readOnly && !ledgerBlocked && v.active && (
-                        <button
-                          onClick={() => openEntry(v, "credit")}
-                          className="btn-ghost rounded-md px-2.5 py-1 text-[11px] whitespace-nowrap"
-                        >
-                          + Entry
+                          Open Ledger
                         </button>
                       )}
                       {!readOnly && (
                         <>
-                          <button onClick={() => openVendor(v)} className="btn-ghost rounded-md px-2.5 py-1 text-[11px]">
+                          <button onClick={() => openVendorForm(v)} className="btn-ghost rounded-md px-2.5 py-1 text-[11px]">
                             Rename
                           </button>
                           {v.active ? (
@@ -529,19 +604,15 @@ export default function VendorsPage() {
                   <option value="all">Full history</option>
                   <option value="month">{monthName(month)} only</option>
                 </select>
-                {!readOnly && detailVendor.active && (
-                  <button
-                    onClick={() => openEntry(detailVendor, "credit")}
-                    className="btn-ghost rounded-lg px-3 py-1.5 text-xs"
-                  >
-                    + Add Entry
-                  </button>
-                )}
                 <button onClick={() => exportVendor(detailVendor)} className="btn-primary rounded-lg px-3 py-1.5 text-xs">
                   ⤓ Download Excel
                 </button>
                 <button
-                  onClick={() => setDetailVendor(null)}
+                  onClick={() => {
+                    setDetailVendor(null);
+                    setEditCell(null);
+                    setError(null);
+                  }}
                   className="text-muted hover:text-primary text-xl leading-none px-1"
                 >
                   &times;
@@ -554,6 +625,11 @@ export default function VendorsPage() {
               const debit = rows.reduce((s, t) => s + t.debit, 0);
               const credit = rows.reduce((s, t) => s + t.credit, 0);
               const closing = rows.length ? rows[rows.length - 1].balance : outstandingFor(detailVendor.id);
+              // Live preview of what the blank row would do to the balance.
+              const runningBase = rows.length ? rows[rows.length - 1].balance : 0;
+              const draftBalance = runningBase + n(draftCredit) - n(draftDebit);
+              const draftHasAmount = n(draftDebit) > 0 || n(draftCredit) > 0;
+
               return (
                 <>
                   <div className="px-5 pt-4 grid grid-cols-3 gap-3">
@@ -573,62 +649,225 @@ export default function VendorsPage() {
                     </div>
                   </div>
 
+                  {error && (
+                    <div className="mx-5 mt-3 text-rose text-[12px] font-semibold">{error}</div>
+                  )}
+
                   <div className="px-5 py-4 max-h-[52vh] overflow-y-auto">
-                    <table className="w-full text-[12.5px]">
-                      <thead className="sticky top-0 bg-white">
-                        <tr className="text-left text-muted text-[11px] uppercase tracking-wide border-b border-border">
-                          <th className="py-2 px-2">Date</th>
-                          <th className="py-2 px-2">Description</th>
-                          <th className="py-2 px-2 text-right">Debit</th>
-                          <th className="py-2 px-2 text-right">Credit</th>
-                          <th className="py-2 px-2 text-right">Balance</th>
-                          {!readOnly && <th className="py-2 px-2"></th>}
+                    <table className="w-full text-[12.5px] border border-border">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="text-left text-muted text-[11px] uppercase tracking-wide bg-gold-light/60">
+                          <th className="py-2 px-2 border-r border-border/60 w-[120px]">Date</th>
+                          <th className="py-2 px-2 border-r border-border/60">Description</th>
+                          <th className="py-2 px-2 border-r border-border/60 text-right w-[110px]">Debit</th>
+                          <th className="py-2 px-2 border-r border-border/60 text-right w-[110px]">Credit</th>
+                          <th className="py-2 px-2 text-right w-[120px]">Balance</th>
+                          {!readOnly && <th className="py-2 px-1 w-[34px]"></th>}
                         </tr>
                       </thead>
                       <tbody>
                         {rows.length === 0 && (
                           <tr>
-                            <td colSpan={readOnly ? 5 : 6} className="text-center py-8 text-muted">
-                              No entries recorded{detailScope === "month" ? ` in ${monthName(month)}` : ""} yet.
+                            <td colSpan={readOnly ? 5 : 6} className="text-center py-6 text-muted">
+                              No entries yet{detailScope === "month" ? ` in ${monthName(month)}` : ""} — start
+                              typing in the row below.
                             </td>
                           </tr>
                         )}
-                        {rows.map((t) => (
-                          <tr key={t.id} className="border-b border-border last:border-0">
-                            <td className="py-2 px-2 whitespace-nowrap">{fmtDMY(t.txn_date)}</td>
-                            <td className="py-2 px-2">{t.description || "—"}</td>
-                            <td className="py-2 px-2 text-right text-gold-deep">
-                              {t.debit ? money(t.debit) : "—"}
-                            </td>
-                            <td className="py-2 px-2 text-right text-rose">{t.credit ? money(t.credit) : "—"}</td>
-                            <td className="py-2 px-2 text-right font-bold">{money(t.balance)}</td>
-                            {!readOnly && (
-                              <td className="py-2 px-2 text-right">
-                                <button
-                                  onClick={() => deleteTxn(t)}
-                                  className="text-[11px] font-semibold text-rose hover:underline"
-                                >
-                                  Delete
-                                </button>
+                        {rows.map((t) => {
+                          const editing = (f: NonNullable<EditCell>["field"]) =>
+                            editCell?.id === t.id && editCell.field === f;
+                          return (
+                            <tr key={t.id} className="border-t border-border hover:bg-[#FBF8ED]">
+                              <td className={cellCls} onClick={() => beginEdit(t, "txn_date")}>
+                                {editing("txn_date") ? (
+                                  <input
+                                    autoFocus
+                                    type="date"
+                                    className={inputCls}
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={() => commitEdit(t)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") commitEdit(t);
+                                      if (e.key === "Escape") setEditCell(null);
+                                    }}
+                                  />
+                                ) : (
+                                  <span className={readOnly ? "" : "cursor-text"}>{fmtDMY(t.txn_date)}</span>
+                                )}
                               </td>
-                            )}
+                              <td className={cellCls} onClick={() => beginEdit(t, "description")}>
+                                {editing("description") ? (
+                                  <input
+                                    autoFocus
+                                    className={inputCls}
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={() => commitEdit(t)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") commitEdit(t);
+                                      if (e.key === "Escape") setEditCell(null);
+                                    }}
+                                  />
+                                ) : (
+                                  <span className={readOnly ? "" : "cursor-text"}>{t.description || "—"}</span>
+                                )}
+                              </td>
+                              <td
+                                className={`${cellCls} text-right text-gold-deep`}
+                                onClick={() => beginEdit(t, "debit")}
+                              >
+                                {editing("debit") ? (
+                                  <input
+                                    autoFocus
+                                    type="number"
+                                    className={`${inputCls} text-right`}
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={() => commitEdit(t)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") commitEdit(t);
+                                      if (e.key === "Escape") setEditCell(null);
+                                    }}
+                                  />
+                                ) : (
+                                  <span className={readOnly ? "" : "cursor-text"}>
+                                    {t.debit ? money(t.debit) : "—"}
+                                  </span>
+                                )}
+                              </td>
+                              <td className={`${cellCls} text-right text-rose`} onClick={() => beginEdit(t, "credit")}>
+                                {editing("credit") ? (
+                                  <input
+                                    autoFocus
+                                    type="number"
+                                    className={`${inputCls} text-right`}
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={() => commitEdit(t)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") commitEdit(t);
+                                      if (e.key === "Escape") setEditCell(null);
+                                    }}
+                                  />
+                                ) : (
+                                  <span className={readOnly ? "" : "cursor-text"}>
+                                    {t.credit ? money(t.credit) : "—"}
+                                  </span>
+                                )}
+                              </td>
+                              <td className={`${cellCls} text-right font-bold bg-bg/60`}>{money(t.balance)}</td>
+                              {!readOnly && (
+                                <td className="py-1.5 px-1 text-center">
+                                  <button
+                                    onClick={() => deleteTxn(t)}
+                                    className="text-rose hover:bg-rose-light rounded w-5 h-5 leading-none"
+                                    title="Delete this row"
+                                  >
+                                    ×
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+
+                        {/* Blank row — type straight into it, like a spreadsheet */}
+                        {!readOnly && detailVendor.active && (
+                          <tr className="border-t-2 border-gold/40 bg-gold-light/25">
+                            <td className={cellCls}>
+                              <input
+                                ref={draftDateRef}
+                                type="date"
+                                className={inputCls}
+                                value={draftDate}
+                                onChange={(e) => setDraftDate(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && commitDraft(detailVendor)}
+                              />
+                            </td>
+                            <td className={cellCls}>
+                              <input
+                                className={inputCls}
+                                placeholder="Description…"
+                                value={draftDesc}
+                                onChange={(e) => setDraftDesc(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && commitDraft(detailVendor)}
+                              />
+                            </td>
+                            <td className={cellCls}>
+                              <input
+                                type="number"
+                                className={`${inputCls} text-right`}
+                                placeholder="Debit"
+                                value={draftDebit}
+                                onChange={(e) => setDraftDebit(e.target.value === "" ? "" : Number(e.target.value))}
+                                onKeyDown={(e) => e.key === "Enter" && commitDraft(detailVendor)}
+                              />
+                            </td>
+                            <td className={cellCls}>
+                              <input
+                                type="number"
+                                className={`${inputCls} text-right`}
+                                placeholder="Credit"
+                                value={draftCredit}
+                                onChange={(e) => setDraftCredit(e.target.value === "" ? "" : Number(e.target.value))}
+                                onKeyDown={(e) => e.key === "Enter" && commitDraft(detailVendor)}
+                              />
+                            </td>
+                            <td className={`${cellCls} text-right font-bold ${draftHasAmount ? "" : "text-muted"}`}>
+                              {money(draftBalance)}
+                            </td>
+                            <td className="py-1.5 px-1 text-center">
+                              <button
+                                onClick={() => commitDraft(detailVendor)}
+                                disabled={!draftHasAmount || savingRow}
+                                className="text-gold-deep disabled:opacity-30 hover:bg-gold-light rounded w-5 h-5 leading-none font-bold"
+                                title="Save row (or press Enter)"
+                              >
+                                ✓
+                              </button>
+                            </td>
                           </tr>
-                        ))}
+                        )}
                       </tbody>
                       {rows.length > 0 && (
                         <tfoot>
-                          <tr className="border-t-2 border-border font-bold">
-                            <td className="py-2 px-2" colSpan={2}>
+                          <tr className="border-t-2 border-border font-bold bg-bg">
+                            <td className={cellCls} colSpan={2}>
                               TOTAL
                             </td>
-                            <td className="py-2 px-2 text-right">{money(debit)}</td>
-                            <td className="py-2 px-2 text-right">{money(credit)}</td>
-                            <td className="py-2 px-2 text-right">{money(closing)}</td>
+                            <td className={`${cellCls} text-right`}>{money(debit)}</td>
+                            <td className={`${cellCls} text-right`}>{money(credit)}</td>
+                            <td className={`${cellCls} text-right`}>{money(closing)}</td>
                             {!readOnly && <td />}
                           </tr>
                         </tfoot>
                       )}
                     </table>
+                  </div>
+
+                  <div className="px-5 py-3 border-t border-border flex items-center justify-between gap-3 flex-wrap">
+                    <div className="text-[11px] text-muted">
+                      {readOnly ? (
+                        "View only — your account can monitor this account but not change it."
+                      ) : (
+                        <>
+                          Type into the bottom row and press <b>Enter</b> to save. Click any cell above to edit
+                          it. The date stays put so you can enter several bills for the same day in a row.
+                        </>
+                      )}
+                    </div>
+                    {!readOnly && (
+                      <label className="flex items-center gap-2 text-[11.5px] whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={postToLedger}
+                          onChange={(e) => setPostToLedger(e.target.checked)}
+                        />
+                        Post debits to the daily ledger
+                      </label>
+                    )}
                   </div>
                 </>
               );
@@ -637,110 +876,51 @@ export default function VendorsPage() {
         </div>
       )}
 
-      {/* ---------------- ADD / EDIT MODALS ---------------- */}
-      {modal && (
+      {/* ---------------- ADD / RENAME VENDOR ---------------- */}
+      {vendorModal && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl overflow-hidden my-8">
             <div className="px-5 py-4 border-b border-border">
               <div className="font-bold text-sm text-primary">
-                {modal.kind === "vendor"
-                  ? modal.vendor
-                    ? `Edit — ${modal.vendor.category}`
-                    : "Add Vendor"
-                  : `New Entry — ${modal.vendor.shop_name || modal.vendor.category}`}
+                {vendorModal.vendor ? `Edit — ${vendorModal.vendor.category}` : "Add Vendor"}
               </div>
             </div>
             <div className="px-5 py-4 flex flex-col gap-3">
               {error && <div className="text-rose text-[12.5px] font-semibold">{error}</div>}
-
-              {modal.kind === "vendor" ? (
-                <>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Supplies</label>
-                    <input
-                      className="w-full mt-1"
-                      value={category}
-                      onChange={(e) => setCategory(e.target.value)}
-                      placeholder="e.g. Grocery, Beef, Gas Cylinder"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Shop Name</label>
-                    <input
-                      className="w-full mt-1"
-                      value={shopName}
-                      onChange={(e) => setShopName(e.target.value)}
-                      placeholder="Leave blank if the shop has no name"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Contact (optional)</label>
-                    <input className="w-full mt-1" value={contact} onChange={(e) => setContact(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Notes (optional)</label>
-                    <input className="w-full mt-1" value={notes} onChange={(e) => setNotes(e.target.value)} />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Entry Type</label>
-                    <select
-                      className="w-full mt-1"
-                      value={entryKind}
-                      onChange={(e) => setEntryKind(e.target.value as any)}
-                    >
-                      <option value="credit">Credit — bill received (we owe more)</option>
-                      <option value="debit">Debit — payment made (we owe less)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Date</label>
-                    <input type="date" className="w-full mt-1" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
-                    <div className="text-[11px] text-muted mt-1">
-                      Multiple entries on the same date are fine — add one row per bill or payment.
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Amount</label>
-                    <input
-                      type="number"
-                      className="w-full mt-1"
-                      value={entryAmount}
-                      placeholder="0"
-                      onChange={(e) => setEntryAmount(e.target.value === "" ? "" : Number(e.target.value))}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-muted uppercase">Description</label>
-                    <input
-                      className="w-full mt-1"
-                      value={entryDesc}
-                      onChange={(e) => setEntryDesc(e.target.value)}
-                      placeholder={entryKind === "debit" ? "e.g. Cash paid against bill #12" : "e.g. Weekly grocery bill"}
-                    />
-                  </div>
-                  {entryKind === "debit" && (
-                    <label className="flex items-center gap-2 text-[12.5px]">
-                      <input
-                        type="checkbox"
-                        checked={entryToLedger}
-                        onChange={(e) => setEntryToLedger(e.target.checked)}
-                      />
-                      Also record in the daily ledger as an expense
-                    </label>
-                  )}
-                </>
-              )}
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Supplies</label>
+                <input
+                  className="w-full mt-1"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="e.g. Grocery, Beef, Gas Cylinder"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Shop Name</label>
+                <input
+                  className="w-full mt-1"
+                  value={shopName}
+                  onChange={(e) => setShopName(e.target.value)}
+                  placeholder="Leave blank if the shop has no name"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Contact (optional)</label>
+                <input className="w-full mt-1" value={contact} onChange={(e) => setContact(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Notes (optional)</label>
+                <input className="w-full mt-1" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              </div>
             </div>
             <div className="px-5 py-3.5 border-t border-border flex justify-end gap-2">
-              <button onClick={() => { setModal(null); setError(null); }} className="btn-ghost rounded-lg px-4 py-2 text-sm">
+              <button onClick={() => { setVendorModal(null); setError(null); }} className="btn-ghost rounded-lg px-4 py-2 text-sm">
                 Cancel
               </button>
               <button
                 disabled={busy}
-                onClick={() => (modal.kind === "vendor" ? saveVendor(modal.vendor) : saveEntry(modal.vendor))}
+                onClick={() => saveVendor(vendorModal.vendor)}
                 className="btn-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
               >
                 {busy ? "Saving…" : "Save"}
