@@ -8,8 +8,8 @@ type NumField = number | "";
 /**
  * Discount input with the signed-in role's ceiling built in.
  *
- *   Manager ............ Rs. 30,000 per booking   (currently Zain Syed)
- *   General Manager .... Rs. 50,000 per booking   (currently Ikram Abbasi)
+ *   Manager ............ Rs.  50,000 per booking  (currently Zain Syed)
+ *   General Manager .... Rs. 100,000 per booking  (currently Ikram Abbasi)
  *   Staff / Owner ...... no discount authority
  *   Admin / Developer .. unlimited
  *

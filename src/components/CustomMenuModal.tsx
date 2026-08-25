@@ -11,18 +11,16 @@ export type CustomSelection = {
   quantity: number;
 };
 
+// Every menu item is priced per head, so every selected item's quantity is
+// simply the guaranteed guest count.
 export function resyncGuestQuantities(
   selection: CustomSelection[],
   items: AddonItem[],
   guests: number
 ): CustomSelection[] {
-  return selection.map((s) => {
-    const item = items.find((i) => i.id === s.addon_item_id);
-    if (item && item.default_qty_mode === "guests" && s.quantity !== guests) {
-      return { ...s, quantity: guests || 0 };
-    }
-    return s;
-  });
+  return selection.map((s) =>
+    s.quantity === guests ? s : { ...s, quantity: guests || 0 }
+  );
 }
 
 export default function CustomMenuModal({
@@ -30,7 +28,7 @@ export default function CustomMenuModal({
   guests,
   initialSelection,
   title = "Customized Menu",
-  subtitle = "Pick items from the full 2026 menu — quantities default per guest count where relevant, but you can change any of them.",
+  subtitle = "Pick items from the full 2026 menu — every item is charged per head, so quantities follow the guaranteed guest count.",
   confirmLabel = "Add to Booking",
   onClose,
   onConfirm,
@@ -68,23 +66,21 @@ export default function CustomMenuModal({
   function toggle(item: AddonItem, checked: boolean) {
     setQuantities((prev) => {
       const next = { ...prev };
-      if (checked) next[item.id] = item.default_qty_mode === "guests" ? guests || 0 : 1;
+      if (checked) next[item.id] = guests || 0;
       else delete next[item.id];
       return next;
     });
   }
 
-  // Per-head items must always reflect the CURRENT guest count, not whatever
-  // it was when the item was first checked — otherwise the total silently
-  // goes stale the moment someone edits the guest count afterward. Only
-  // flat/per-unit items (Lamb Roast, Stalls) keep a manually editable qty.
+  // Everything on the menu is per head, so every checked item must always
+  // reflect the CURRENT guest count — otherwise the total silently goes stale
+  // the moment someone edits the guest count afterward.
   useEffect(() => {
     setQuantities((prev) => {
       let changed = false;
       const next = { ...prev };
       for (const id of Object.keys(next)) {
-        const item = items.find((i) => i.id === id);
-        if (item && item.default_qty_mode === "guests" && next[id] !== guests) {
+        if (next[id] !== guests) {
           next[id] = guests || 0;
           changed = true;
         }
@@ -92,10 +88,6 @@ export default function CustomMenuModal({
       return changed ? next : prev;
     });
   }, [guests, items]);
-
-  function setQty(id: string, qty: number) {
-    setQuantities((prev) => ({ ...prev, [id]: qty }));
-  }
 
   const selectedTotal = Object.entries(quantities).reduce((sum, [id, qty]) => {
     const item = items.find((i) => i.id === id);
@@ -147,23 +139,12 @@ export default function CustomMenuModal({
                         />
                         <span>{item.name}</span>
                         <span className="text-muted text-xs">
-                          ({money(item.price)} {item.default_qty_mode === "guests" ? "/ head" : "/ unit"})
+                          ({money(item.price)} / head)
                         </span>
                       </label>
                       {checked && (
                         <div className="flex items-center gap-2 shrink-0">
-                          {item.default_qty_mode === "guests" ? (
-                            <span className="w-24 text-xs text-muted text-right">× {guests || 0} guests</span>
-                          ) : (
-                            <input
-                              type="number"
-                              min={0}
-                              className="w-20 py-1 text-sm"
-                              value={quantities[item.id] === 0 ? "" : quantities[item.id]}
-                              placeholder="0"
-                              onChange={(e) => setQty(item.id, e.target.value === "" ? 0 : Number(e.target.value))}
-                            />
-                          )}
+                          <span className="w-24 text-xs text-muted text-right">× {guests || 0} guests</span>
                           <span className="text-xs text-muted w-24 text-right">
                             {money(item.price * (quantities[item.id] || 0))}
                           </span>

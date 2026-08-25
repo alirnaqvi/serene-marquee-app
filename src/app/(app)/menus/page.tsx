@@ -74,7 +74,9 @@ export default async function MenusPage() {
 
       <div className="text-[14.5px] font-bold text-primary mb-1">Add-Ons</div>
       <div className="text-xs text-muted mb-3">
-        Available for the Customized Menu, or as extras added on top of any regular menu when booking.
+        Available for the Customized Menu, or as extras added on top of any regular menu when booking. Every
+        item is charged <b className="text-primary">per head</b> — quantity always follows the guaranteed guest
+        count.
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {addonCategories.map(([category, catItems]) => (
@@ -87,7 +89,7 @@ export default async function MenusPage() {
                     <td className="py-1.5 pr-2">{item.name}</td>
                     <td className="py-1.5 text-right font-semibold whitespace-nowrap">
                       {money(item.price)}
-                      <span className="text-muted font-normal"> {item.default_qty_mode === "guests" ? "/ head" : "/ unit"}</span>
+                      <span className="text-muted font-normal"> / head</span>
                     </td>
                   </tr>
                 ))}

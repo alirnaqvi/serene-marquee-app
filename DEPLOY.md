@@ -1,104 +1,74 @@
-# Deploying this update to Vercel
+# Deploying to Vercel
 
-This zip is the **complete project** — the whole repo with the August 2026
-changes already applied. Nothing needs to be merged by hand.
+This zip is the **complete project**. Copy it over your repo, commit, push.
 
-## The two steps
+## Step 1 — Run BOTH migrations, in order
 
-### 1. Run the database migration FIRST
+Supabase Dashboard → SQL Editor → New query → paste → Run.
 
-Supabase Dashboard → SQL Editor → New query → paste all of
-`supabase/migration-2026-08.sql` → Run.
+1. `supabase/migration-2026-08.sql`  *(skip if you already ran it)*
+2. `supabase/migration-2026-09.sql`  ← **new**
 
-The app will build fine without this, but pages will throw at runtime because
-the new tables and columns won't exist. Do it before you deploy, not after.
-The script is idempotent, so running it twice is harmless.
+Both are idempotent, so re-running either is harmless. Do this **before** you
+deploy — the app builds fine without them but pages will throw at runtime.
 
-### 2. Replace the repo contents and push
+### About the per-head change in migration 09
+
+Migration 09 sets every menu add-on to **per head**. A few items (cold drinks,
+lamb roast, mutton leg, the stalls) had been entered with the wrong quantity
+mode and were being multiplied per unit; they are charged per head in practice.
+
+**No prices change.** Every item keeps its current rate — only the quantity mode
+is corrected, so quantity now follows the guaranteed guest count like the rest
+of the menu already did.
+
+## Step 2 — Push
 
 ```bash
-# from inside your existing clone
-git rm -r --cached .          # forget the old file list, keeps files on disk
-# now copy everything from this zip over your project folder, overwriting
+git rm --cached tsconfig.tsbuildinfo   # if git still tracks it
+# copy this zip's contents over your project folder
 git add -A
-git commit -m "Aug 2026 update: payroll, vendors, refunds, roles, tickets"
+git commit -m "Sept 2026 update: vendor ledger, xlsx, per-head menu, summaries"
 git push
 ```
 
-Vercel redeploys on push. Nothing to change in your Vercel project settings.
+`npm install` runs automatically on Vercel and will pick up the one new
+dependency (`fflate`, 8KB, used for xlsx generation).
 
----
+## Environment variables
 
-## Two things that will break the build if you miss them
-
-### Environment variables must exist in Vercel
-
-Vercel Project → Settings → Environment Variables. Both of these must be set for
-**Production, Preview and Development**:
+Must exist in Vercel → Settings → Environment Variables for Production, Preview
+and Development:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 ```
 
-Your `.env.local` is gitignored and never reaches Vercel — if these aren't set in
-the dashboard, the build fails when it prerenders pages that construct the
-Supabase client. This is the single most common cause of "it works locally but
-not on Vercel".
-
-### Don't commit `tsconfig.tsbuildinfo`
-
-Your repo had this file committed. It's TypeScript's incremental build cache, and
-a stale one causes type errors on Vercel that don't reproduce locally — the
-compiler trusts the cache and reports against files that no longer match. It has
-been **deleted from this zip and added to `.gitignore`**. If git still tracks it
-in your clone:
-
-```bash
-git rm --cached tsconfig.tsbuildinfo
-```
-
 ---
 
 ## Verified before packaging
 
-Run from a clean checkout with no `node_modules` and no build cache:
+From a clean checkout, no `node_modules`, no build cache:
 
-- `npm ci` — 140 packages, no errors
+- `npm ci` — clean
 - `npx tsc --noEmit` — clean
-- `npx next build` — compiles, all **17 routes** generated
-
-The only build warning is an existing one from `jspdf`'s bundled fonts, which
-predates this change and doesn't affect the output.
+- `npx next build` — all **17 routes** generated
+- Generated `.xlsx` files opened and validated with a real spreadsheet parser:
+  correct sheet names, numeric cells, number formats, frozen header, autofilter
 
 ---
 
-## If the build still fails
+## If the build fails
 
-Read the **first** error in the Vercel log, not the last — Next.js prints a
-summary at the bottom that's often less useful than the original message.
-
-| Error message contains | Cause |
+| Error contains | Cause |
 |---|---|
-| `supabaseUrl is required` / `Invalid URL` | Env vars missing in Vercel (see above) |
-| `Cannot find module '@/components/SessionContext'` | A file didn't get copied — re-copy `src/` wholesale |
-| `relation "vendors" does not exist` | Migration not run yet |
-| `column bookings.advance_refunded does not exist` | Migration not run yet |
-| `Failed to fetch font 'Inter'` | Transient Google Fonts timeout — just redeploy |
+| `supabaseUrl is required` | Env vars missing in Vercel |
+| `Cannot find module 'fflate'` | `npm install` didn't run — redeploy without build cache |
+| `Cannot find module '@/lib/xlsx'` | `src/lib/xlsx.ts` didn't get copied |
+| `Cannot find module '@/lib/exportLedger'` | A stale file still imports the deleted CSV module — delete it |
+| `relation "vendor_transactions" does not exist` | Migration 09 not run |
+| `column bookings.advance_refunded does not exist` | Migration 08 not run |
 
-The `@/...` imports resolve via the `paths` mapping in `tsconfig.json`, so the
-folder structure has to be exact. `(app)` is a Next.js route group and the
-parentheses are part of the real folder name; `[id]` likewise includes the square
-brackets. If your OS or file manager stripped them while copying, imports will
-resolve but routes will 404.
-
----
-
-## After it's live — one setting to check
-
-The Owner/CEO monitor-only rule keys off the **role**, not the person's name. Go
-to Staff & Access and confirm Mahmud Ali Shah and Afeefa Batool are both set to
-**Owner**. Until then they'll still have edit buttons.
-
-While you're there, confirm Zain Syed is **Manager** (Rs. 30,000 discount cap) and
-Ikram Abbasi is **General Manager** (Rs. 50,000 cap).
+Note `src/lib/exportLedger.ts` has been **deleted** — CSV export is gone
+everywhere, replaced by real xlsx. If your copy still has that file, remove it.

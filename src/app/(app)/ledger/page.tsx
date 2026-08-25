@@ -5,14 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/calculations";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
-import {
-  downloadCsv,
-  downloadExcel,
-  monthName,
-  currentMonth,
-  recentMonths,
-  type ExportColumn,
-} from "@/lib/exportLedger";
+import { downloadXlsx, monthName, currentMonth, recentMonths, type SheetColumn } from "@/lib/xlsx";
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
 import { useSession, ReadOnlyNotice } from "@/components/SessionContext";
@@ -76,10 +69,13 @@ export default function LedgerPage() {
       });
   }, [entries]);
 
-  const rows = useMemo(
-    () => (month === ALL_MONTHS ? allRows : allRows.filter((e) => e.entry_date.slice(0, 7) === month)),
-    [allRows, month]
-  );
+  // allRows is chronological so the running balance is correct. The table and
+  // the export both show newest first, which is what the office actually wants
+  // when they open the page — today's entries, not January's.
+  const rows = useMemo(() => {
+    const scoped = month === ALL_MONTHS ? allRows : allRows.filter((e) => e.entry_date.slice(0, 7) === month);
+    return [...scoped].reverse();
+  }, [allRows, month]);
 
   const income = rows.filter((e) => e.type === "income").reduce((s, e) => s + e.amount, 0);
   const expense = rows.filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0);
@@ -114,16 +110,16 @@ export default function LedgerPage() {
   }
 
   // ---- Month-end export -----------------------------------------------
-  const exportColumns: ExportColumn<Row>[] = [
+  const exportColumns: SheetColumn<Row>[] = [
     { header: "Date", value: (e) => fmtDMY(e.entry_date) },
-    { header: "Description", value: (e) => e.description },
-    { header: "Handed To", value: (e) => e.handed_to || "" },
+    { header: "Description", value: (e) => e.description, width: 38 },
+    { header: "Handed To", value: (e) => e.handed_to || "", width: 20 },
     { header: "Type", value: (e) => (e.type === "income" ? "Income" : "Expense") },
-    { header: "Income (Rs.)", value: (e) => (e.type === "income" ? Math.round(e.amount) : "") },
-    { header: "Expense (Rs.)", value: (e) => (e.type === "expense" ? Math.round(e.amount) : "") },
-    { header: "Running Balance (Rs.)", value: (e) => Math.round(e.running) },
-    { header: "Recorded By", value: (e) => e.profiles?.full_name || "" },
-    { header: "Recorded On", value: (e) => fmtDMYTime(new Date(e.created_at)) },
+    { header: "Income", value: (e) => (e.type === "income" ? Math.round(e.amount) : ""), money: true },
+    { header: "Expense", value: (e) => (e.type === "expense" ? Math.round(e.amount) : ""), money: true },
+    { header: "Running Balance", value: (e) => Math.round(e.running), money: true },
+    { header: "Recorded By", value: (e) => e.profiles?.full_name || "", width: 20 },
+    { header: "Recorded On", value: (e) => fmtDMYTime(new Date(e.created_at)), width: 20 },
   ];
 
   function fileBase() {
@@ -131,23 +127,23 @@ export default function LedgerPage() {
     return `serene-marquee-ledger-${stamp}`;
   }
 
-  function titleLines() {
-    return [
-      "Serene Marquee — Daily Ledger",
-      `Period: ${periodLabel}`,
-      `Total Income: Rs. ${Math.round(income).toLocaleString("en-PK")}`,
-      `Total Expense: Rs. ${Math.round(expense).toLocaleString("en-PK")}`,
-      `Net: Rs. ${Math.round(income - expense).toLocaleString("en-PK")}`,
-      `Generated: ${fmtDMYTime(new Date())}`,
-    ];
-  }
-
-  function handleExportCsv() {
-    downloadCsv(fileBase(), exportColumns, rows, titleLines());
-  }
-
-  function handleExportExcel() {
-    downloadExcel(fileBase(), exportColumns, rows, titleLines());
+  function handleExport() {
+    downloadXlsx(fileBase(), [
+      {
+        name: month === ALL_MONTHS ? "All Time" : monthName(month),
+        columns: exportColumns,
+        rows,
+        titleLines: [
+          "Serene Marquee — Daily Ledger",
+          `Period: ${periodLabel}`,
+          `Income: Rs. ${Math.round(income).toLocaleString("en-PK")}   |   Expense: Rs. ${Math.round(
+            expense
+          ).toLocaleString("en-PK")}   |   Net: Rs. ${Math.round(income - expense).toLocaleString("en-PK")}`,
+          `Generated: ${fmtDMYTime(new Date())}`,
+        ],
+        totalsRow: ["TOTAL", "", "", "", Math.round(income), Math.round(expense), Math.round(income - expense)],
+      },
+    ]);
   }
 
   if (restricted) {
@@ -201,21 +197,14 @@ export default function LedgerPage() {
         </div>
         <div className="flex items-end gap-2">
           <div className="text-[11.5px] text-muted mr-1 mb-2 hidden sm:block">
-            {rows.length} entr{rows.length === 1 ? "y" : "ies"} in {periodLabel}
+            {rows.length} entr{rows.length === 1 ? "y" : "ies"} in {periodLabel} · newest first
           </div>
           <button
-            onClick={handleExportCsv}
-            disabled={rows.length === 0}
-            className="btn-ghost rounded-lg px-3.5 py-2 text-sm disabled:opacity-40"
-          >
-            ⤓ CSV
-          </button>
-          <button
-            onClick={handleExportExcel}
+            onClick={handleExport}
             disabled={rows.length === 0}
             className="btn-primary rounded-lg px-3.5 py-2 text-sm disabled:opacity-40"
           >
-            ⤓ Excel
+            ⤓ Download Excel
           </button>
         </div>
       </div>
@@ -236,7 +225,7 @@ export default function LedgerPage() {
         <div className="card">
           <div className="text-[11.5px] text-muted uppercase font-semibold">Balance Carried</div>
           <div className="text-2xl font-bold font-serif mt-1.5">
-            {money(rows.length ? rows[rows.length - 1].running : 0)}
+            {money(rows.length ? rows[0].running : 0)}
           </div>
         </div>
       </div>

@@ -7,8 +7,31 @@ import { createClient } from "@/lib/supabase/client";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import { fmtDMY } from "@/lib/dateFormat";
 import { useSession } from "@/components/SessionContext";
+import { downloadXlsx, monthName, currentMonth, recentMonths, monthBounds, type SheetColumn } from "@/lib/xlsx";
 import { bookingRef } from "@/types";
 import type { Booking, Venue, Menu } from "@/types";
+
+function Stat({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "rose";
+}) {
+  return (
+    <div className="bg-bg border border-border rounded-lg px-3 py-2.5">
+      <div className="text-[10.5px] text-muted uppercase font-semibold tracking-wide">{label}</div>
+      <div className={`text-[15px] font-bold font-serif mt-1 ${tone === "rose" ? "text-rose" : "text-primary"}`}>
+        {value}
+      </div>
+      {sub && <div className="text-[10px] text-muted mt-0.5">{sub}</div>}
+    </div>
+  );
+}
 
 function fmtDate(d: string) {
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
@@ -41,9 +64,12 @@ export default function BookingsPage() {
   const [menus, setMenus] = useState<Menu[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [search, setSearch] = useState("");
-  // Date is a separate field with a real calendar picker, so nobody has to
-  // guess whether to type 09-12-2026 or 12-09-2026.
-  const [dateFilter, setDateFilter] = useState(searchParams.get("date") || "");
+  // Dates use real calendar pickers, so nobody has to guess whether to type
+  // 09-12-2026 or 12-09-2026. A range covers both "one day" (set both to the
+  // same date) and "this month" (the month buttons fill both in).
+  const [dateFrom, setDateFrom] = useState(searchParams.get("date") || "");
+  const [dateTo, setDateTo] = useState(searchParams.get("date") || "");
+  const [statusFilter, setStatusFilter] = useState<"all" | "Confirmed" | "Tentative" | "Cancelled">("all");
 
   useEffect(() => {
     async function load() {
@@ -75,7 +101,9 @@ export default function BookingsPage() {
     const qDigits = digitsOnly(q);
 
     return bookings.filter((b) => {
-      if (dateFilter && b.event_date !== dateFilter) return false;
+      if (dateFrom && b.event_date < dateFrom) return false;
+      if (dateTo && b.event_date > dateTo) return false;
+      if (statusFilter !== "all" && b.status !== statusFilter) return false;
       if (!q) return true;
 
       // Client name
@@ -88,9 +116,109 @@ export default function BookingsPage() {
 
       return false;
     });
-  }, [bookings, search, dateFilter]);
+  }, [bookings, search, dateFrom, dateTo, statusFilter]);
 
-  const filtering = Boolean(search.trim() || dateFilter);
+  const filtering = Boolean(search.trim() || dateFrom || dateTo || statusFilter !== "all");
+
+  // Summary over whatever is currently filtered — so "this month" and "1 Sep
+  // to 15 Sep" both produce a total without a separate report screen.
+  const summary = useMemo(() => {
+    const live = rows.filter((b) => b.status !== "Cancelled");
+    const acc = {
+      count: rows.length,
+      confirmed: rows.filter((b) => b.status === "Confirmed").length,
+      tentative: rows.filter((b) => b.status === "Tentative").length,
+      cancelled: rows.filter((b) => b.status === "Cancelled").length,
+      guests: 0,
+      gross: 0,
+      discount: 0,
+      advance: 0,
+      balance: 0,
+      refunded: 0,
+    };
+    live.forEach((b) => {
+      const t = chargesFromBooking(b, venues, menus);
+      acc.guests += b.guests;
+      acc.gross += t.grandTotal;
+      acc.discount += t.discountAmount;
+      acc.advance += b.advance;
+      acc.balance += t.balance;
+    });
+    rows.filter((b) => b.advance_refunded).forEach((b) => {
+      acc.refunded += b.refund_amount;
+    });
+    return acc;
+  }, [rows, venues, menus]);
+
+  function setMonthRange(month: string) {
+    const { from, to } = monthBounds(month);
+    setDateFrom(from);
+    setDateTo(to);
+  }
+
+  const rangeLabel = dateFrom && dateTo
+    ? dateFrom === dateTo
+      ? fmtDMY(dateFrom)
+      : `${fmtDMY(dateFrom)} – ${fmtDMY(dateTo)}`
+    : dateFrom
+    ? `From ${fmtDMY(dateFrom)}`
+    : dateTo
+    ? `Up to ${fmtDMY(dateTo)}`
+    : "All dates";
+
+  const exportColumns: SheetColumn<Booking>[] = [
+    { header: "Ref", value: (b) => bookingRef(b) },
+    { header: "Function Date", value: (b) => fmtDMY(b.event_date) },
+    { header: "Session", value: (b) => b.session },
+    { header: "Client", value: (b) => b.client, width: 24 },
+    { header: "Phone", value: (b) => b.phone || "", width: 16 },
+    { header: "Venue(s)", value: (b) => venueNames(b), width: 22 },
+    { header: "Function", value: (b) => functionLabel(b), width: 18 },
+    { header: "Guests", value: (b) => b.guests },
+    { header: "Food Subtotal", value: (b) => Math.round(chargesFromBooking(b, venues, menus).foodSubtotal), money: true },
+    { header: "Discount", value: (b) => Math.round(chargesFromBooking(b, venues, menus).discountAmount), money: true },
+    { header: "Grand Total", value: (b) => Math.round(chargesFromBooking(b, venues, menus).grandTotal), money: true },
+    { header: "Advance", value: (b) => Math.round(b.advance), money: true },
+    { header: "Refunded", value: (b) => Math.round(b.advance_refunded ? b.refund_amount : 0), money: true },
+    { header: "Balance", value: (b) => Math.round(chargesFromBooking(b, venues, menus).balance), money: true },
+    { header: "Status", value: (b) => b.status },
+  ];
+
+  function handleExport() {
+    const stamp = dateFrom && dateTo ? `${dateFrom}_to_${dateTo}` : "all";
+    downloadXlsx(`serene-marquee-bookings-${stamp}`, [
+      {
+        name: "Bookings",
+        columns: exportColumns,
+        rows,
+        titleLines: [
+          "Serene Marquee — Bookings Summary",
+          `Period: ${rangeLabel}${statusFilter !== "all" ? ` · ${statusFilter} only` : ""}`,
+          `${summary.count} bookings (${summary.confirmed} confirmed, ${summary.tentative} tentative, ${summary.cancelled} cancelled) · ${summary.guests} guests`,
+          `Gross: Rs. ${Math.round(summary.gross).toLocaleString("en-PK")}   |   Advance: Rs. ${Math.round(
+            summary.advance
+          ).toLocaleString("en-PK")}   |   Balance Due: Rs. ${Math.round(summary.balance).toLocaleString("en-PK")}`,
+        ],
+        totalsRow: [
+          "TOTAL",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          summary.guests,
+          "",
+          Math.round(summary.discount),
+          Math.round(summary.gross),
+          Math.round(summary.advance),
+          Math.round(summary.refunded),
+          Math.round(summary.balance),
+          "",
+        ],
+      },
+    ]);
+  }
 
   return (
     <div>
@@ -106,44 +234,100 @@ export default function BookingsPage() {
         )}
       </div>
 
-      <div className="my-4 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-end">
-        <div>
-          <label className="text-xs font-bold text-muted uppercase">Search</label>
-          <input
-            className="w-full mt-1"
-            placeholder="Client name or order number (e.g. Ahmed Khan, SM-000123, 123)…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      <div className="card my-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+          <div className="lg:col-span-2">
+            <label className="text-xs font-bold text-muted uppercase">Search</label>
+            <input
+              className="w-full mt-1"
+              placeholder="Client name or order number (e.g. Ahmed Khan, SM-000123, 123)…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-muted uppercase">Date From</label>
+            <input type="date" className="w-full mt-1" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-muted uppercase">Date To</label>
+            <input type="date" className="w-full mt-1" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
         </div>
-        <div>
-          <label className="text-xs font-bold text-muted uppercase">Function Date</label>
-          <input
-            type="date"
-            className="w-full mt-1"
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-          />
+
+        <div className="flex items-end gap-2 flex-wrap mt-3">
+          <div>
+            <label className="text-xs font-bold text-muted uppercase">Quick Month</label>
+            <select
+              className="mt-1 text-sm"
+              value=""
+              onChange={(e) => e.target.value && setMonthRange(e.target.value)}
+            >
+              <option value="">Choose a month…</option>
+              {recentMonths(24).map((m) => (
+                <option key={m} value={m}>
+                  {monthName(m)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-bold text-muted uppercase">Status</label>
+            <select
+              className="mt-1 text-sm"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+            >
+              <option value="all">All statuses</option>
+              <option value="Confirmed">Confirmed</option>
+              <option value="Tentative">Tentative</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <button
+            onClick={() => setMonthRange(currentMonth())}
+            className="btn-ghost rounded-lg px-3.5 py-2 text-sm h-[38px]"
+          >
+            This Month
+          </button>
+          <button
+            onClick={() => {
+              setSearch("");
+              setDateFrom("");
+              setDateTo("");
+              setStatusFilter("all");
+            }}
+            disabled={!filtering}
+            className="btn-ghost rounded-lg px-3.5 py-2 text-sm disabled:opacity-40 h-[38px]"
+          >
+            Clear
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={handleExport}
+            disabled={rows.length === 0}
+            className="btn-primary rounded-lg px-3.5 py-2 text-sm disabled:opacity-40 h-[38px]"
+          >
+            ⤓ Download Excel
+          </button>
         </div>
-        <button
-          onClick={() => {
-            setSearch("");
-            setDateFilter("");
-          }}
-          disabled={!filtering}
-          className="btn-ghost rounded-lg px-4 py-2 text-sm disabled:opacity-40 h-[38px]"
-        >
-          Clear
-        </button>
       </div>
 
-      {filtering && (
-        <div className="text-[11.5px] text-muted mb-3">
-          {rows.length} booking{rows.length === 1 ? "" : "s"} found
-          {dateFilter && <> on {fmtDMY(dateFilter)}</>}
-          {search.trim() && <> matching “{search.trim()}”</>}
+      {/* Summary of whatever is currently in view */}
+      <div className="card mb-4">
+        <div className="text-[12.5px] font-bold text-primary mb-3">
+          Summary — {rangeLabel}
+          {statusFilter !== "all" && <span className="font-normal text-muted"> · {statusFilter} only</span>}
         </div>
-      )}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <Stat label="Bookings" value={String(summary.count)} sub={`${summary.confirmed} confirmed · ${summary.tentative} tentative`} />
+          <Stat label="Cancelled" value={String(summary.cancelled)} sub={summary.refunded > 0 ? `${money(summary.refunded)} refunded` : "none refunded"} />
+          <Stat label="Guests" value={summary.guests.toLocaleString("en-PK")} sub="excludes cancelled" />
+          <Stat label="Gross Total" value={money(summary.gross)} sub={`after ${money(summary.discount)} discount`} />
+          <Stat label="Advance Received" value={money(summary.advance)} />
+          <Stat label="Balance Due" value={money(summary.balance)} tone="rose" />
+        </div>
+      </div>
 
       <div className="card">
         <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[560px] text-[13px]">

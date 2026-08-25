@@ -170,11 +170,11 @@ export default function StaffAdminPage() {
         <ul className="text-[12.5px] text-muted list-disc pl-5 flex flex-col gap-1">
           <li>
             <b className="text-primary">Manager</b> — may approve up to{" "}
-            <b className="text-primary">Rs. 30,000</b> discount per booking.
+            <b className="text-primary">Rs. 50,000</b> discount per booking.
           </li>
           <li>
             <b className="text-primary">General Manager</b> — may approve up to{" "}
-            <b className="text-primary">Rs. 50,000</b> discount per booking.
+            <b className="text-primary">Rs. 100,000</b> discount per booking.
           </li>
           <li>
             <b className="text-primary">Owner / CEO</b> — monitor only. Can view every screen they have access

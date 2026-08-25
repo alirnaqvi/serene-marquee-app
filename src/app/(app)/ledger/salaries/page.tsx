@@ -5,7 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/calculations";
 import { fmtDMY } from "@/lib/dateFormat";
-import { monthName, currentMonth, recentMonths, downloadCsv, downloadExcel, type ExportColumn } from "@/lib/exportLedger";
+import { monthName, currentMonth, recentMonths, downloadXlsx, type SheetColumn } from "@/lib/xlsx";
 import AlertModal from "@/components/AlertModal";
 import { useSession, ReadOnlyNotice } from "@/components/SessionContext";
 import type { Employee, EmployeeAdvance, EmployeeAdjustment, LedgerEntry } from "@/types";
@@ -126,6 +126,20 @@ export default function SalariesPage() {
       .filter((a) => a.employee_id === empId)
       .map((a) => ({ ...a, outstanding: outstandingOn(a.id, a.amount) }))
       .filter((a) => a.outstanding > 0);
+  }
+  // Everything still owed by this employee across all their advances/loans.
+  function loanBalanceFor(empId: string) {
+    return openAdvancesFor(empId).reduce((sum, a) => sum + a.outstanding, 0);
+  }
+  // Split so payroll can show what is a loan vs a plain salary advance.
+  function loanBreakdownFor(empId: string) {
+    const open = openAdvancesFor(empId);
+    return {
+      loan: open.filter((a) => a.kind === "loan").reduce((s, a) => s + a.outstanding, 0),
+      advance: open.filter((a) => a.kind === "advance").reduce((s, a) => s + a.outstanding, 0),
+      total: open.reduce((s, a) => s + a.outstanding, 0),
+      monthlyCut: open.reduce((s, a) => s + Math.min(a.monthly_deduction || a.outstanding, a.outstanding), 0),
+    };
   }
   function repaymentBookedThisMonth(advanceId: string) {
     return adjustments.some((a) => a.advance_id === advanceId && a.month === month && a.kind === "repayment");
@@ -371,25 +385,114 @@ export default function SalariesPage() {
 
   // ---- month export ---------------------------------------------------
   type ExportRow = { emp: Employee };
-  const exportColumns: ExportColumn<ExportRow>[] = [
-    { header: "Employee", value: (r) => r.emp.full_name },
-    { header: "Designation", value: (r) => r.emp.designation },
-    { header: "Base Salary (Rs.)", value: (r) => Math.round(r.emp.monthly_salary) },
-    { header: "Bonus (Rs.)", value: (r) => Math.round(bonusFor(r.emp.id)) },
-    { header: "Deductions (Rs.)", value: (r) => Math.round(deductionFor(r.emp.id)) },
-    { header: "Net Payable (Rs.)", value: (r) => Math.round(netFor(r.emp)) },
-    { header: "Paid (Rs.)", value: (r) => Math.round(paymentFor(r.emp.id)?.amount || 0) },
+  const exportColumns: SheetColumn<ExportRow>[] = [
+    { header: "Employee", value: (r) => r.emp.full_name, width: 24 },
+    { header: "Designation", value: (r) => r.emp.designation, width: 18 },
+    { header: "Status", value: (r) => (r.emp.active ? "Active" : `Left${r.emp.left_on ? " " + fmtDMY(r.emp.left_on) : ""}`) },
+    { header: "Base Salary", value: (r) => Math.round(r.emp.monthly_salary), money: true },
+    { header: "Bonus", value: (r) => Math.round(bonusFor(r.emp.id)), money: true },
+    { header: "Deductions", value: (r) => Math.round(deductionFor(r.emp.id)), money: true },
+    {
+      header: "Loan Instalment",
+      value: (r) =>
+        Math.round(
+          adjustmentsFor(r.emp.id)
+            .filter((a) => a.kind === "repayment")
+            .reduce((s, a) => s + a.amount, 0)
+        ),
+      money: true,
+    },
+    { header: "Net Payable", value: (r) => Math.round(netFor(r.emp)), money: true },
+    { header: "Paid", value: (r) => Math.round(paymentFor(r.emp.id)?.amount || 0), money: true },
     { header: "Paid On", value: (r) => (paymentFor(r.emp.id) ? fmtDMY(paymentFor(r.emp.id)!.entry_date) : "") },
-    { header: "Outstanding Advance/Loan (Rs.)", value: (r) => Math.round(openAdvancesFor(r.emp.id).reduce((s, a) => s + a.outstanding, 0)) },
+    { header: "Loan Balance", value: (r) => Math.round(loanBreakdownFor(r.emp.id).loan), money: true },
+    { header: "Advance Balance", value: (r) => Math.round(loanBreakdownFor(r.emp.id).advance), money: true },
+    { header: "Total Outstanding", value: (r) => Math.round(loanBreakdownFor(r.emp.id).total), money: true },
   ];
 
-  function exportTitle() {
-    return [
-      "Serene Marquee — Payroll",
-      `Month: ${monthName(month)}`,
-      `Net Payable: Rs. ${Math.round(totalNet).toLocaleString("en-PK")}`,
-      `Paid: Rs. ${Math.round(totalPaid).toLocaleString("en-PK")}`,
-    ];
+  // Second sheet: every advance and loan in full, so the workbook answers
+  // "what does this person still owe and since when" without extra digging.
+  type AdvRow = { emp: Employee; adv: EmployeeAdvance; outstanding: number };
+  const advanceColumns: SheetColumn<AdvRow>[] = [
+    { header: "Employee", value: (r) => r.emp.full_name, width: 24 },
+    { header: "Type", value: (r) => (r.adv.kind === "loan" ? "Loan" : "Advance") },
+    { header: "Given On", value: (r) => fmtDMY(r.adv.issued_on) },
+    { header: "Amount", value: (r) => Math.round(r.adv.amount), money: true },
+    { header: "Monthly Deduction", value: (r) => Math.round(r.adv.monthly_deduction), money: true },
+    { header: "Recovered", value: (r) => Math.round(r.adv.amount - r.outstanding), money: true },
+    { header: "Outstanding", value: (r) => Math.round(r.outstanding), money: true },
+    { header: "Status", value: (r) => (r.outstanding > 0 ? "Open" : "Cleared") },
+    { header: "Notes", value: (r) => r.adv.notes || "", width: 30 },
+  ];
+
+  function advanceRows(): AdvRow[] {
+    return advances
+      .map((adv) => {
+        const emp = employees.find((e) => e.id === adv.employee_id);
+        return emp ? { emp, adv, outstanding: outstandingOn(adv.id, adv.amount) } : null;
+      })
+      .filter((r): r is AdvRow => r !== null)
+      .sort((a, b) => a.emp.full_name.localeCompare(b.emp.full_name) || b.adv.issued_on.localeCompare(a.adv.issued_on));
+  }
+
+  function handleExport() {
+    const rows = visibleEmployees.map((emp) => ({ emp }));
+    const advRows = advanceRows();
+    downloadXlsx(`serene-marquee-payroll-${month}`, [
+      {
+        name: monthName(month),
+        columns: exportColumns,
+        rows,
+        titleLines: [
+          "Serene Marquee — Payroll",
+          `Month: ${monthName(month)}`,
+          `Net Payable: Rs. ${Math.round(totalNet).toLocaleString("en-PK")}   |   Paid: Rs. ${Math.round(
+            totalPaid
+          ).toLocaleString("en-PK")}   |   Outstanding Loans/Advances: Rs. ${Math.round(
+            totalOutstandingLoans
+          ).toLocaleString("en-PK")}`,
+        ],
+        totalsRow: [
+          "TOTAL",
+          "",
+          "",
+          Math.round(rows.reduce((s, r) => s + r.emp.monthly_salary, 0)),
+          Math.round(rows.reduce((s, r) => s + bonusFor(r.emp.id), 0)),
+          Math.round(rows.reduce((s, r) => s + deductionFor(r.emp.id), 0)),
+          Math.round(
+            rows.reduce(
+              (s, r) =>
+                s +
+                adjustmentsFor(r.emp.id)
+                  .filter((a) => a.kind === "repayment")
+                  .reduce((x, a) => x + a.amount, 0),
+              0
+            )
+          ),
+          Math.round(rows.reduce((s, r) => s + netFor(r.emp), 0)),
+          Math.round(rows.reduce((s, r) => s + (paymentFor(r.emp.id)?.amount || 0), 0)),
+          "",
+          Math.round(rows.reduce((s, r) => s + loanBreakdownFor(r.emp.id).loan, 0)),
+          Math.round(rows.reduce((s, r) => s + loanBreakdownFor(r.emp.id).advance, 0)),
+          Math.round(rows.reduce((s, r) => s + loanBreakdownFor(r.emp.id).total, 0)),
+        ],
+      },
+      {
+        name: "Advances & Loans",
+        columns: advanceColumns,
+        rows: advRows,
+        titleLines: ["Serene Marquee — Advances & Loans", `As at ${monthName(month)}`],
+        totalsRow: [
+          "TOTAL",
+          "",
+          "",
+          Math.round(advRows.reduce((s, r) => s + r.adv.amount, 0)),
+          Math.round(advRows.reduce((s, r) => s + r.adv.monthly_deduction, 0)),
+          Math.round(advRows.reduce((s, r) => s + (r.adv.amount - r.outstanding), 0)),
+          Math.round(advRows.reduce((s, r) => s + r.outstanding, 0)),
+        ],
+      },
+    ]);
   }
 
   if (loading) return <div className="text-muted text-sm">Loading…</div>;
@@ -425,16 +528,7 @@ export default function SalariesPage() {
               </option>
             ))}
           </select>
-          <button
-            onClick={() => downloadCsv(`serene-marquee-payroll-${month}`, exportColumns, visibleEmployees.map((emp) => ({ emp })), exportTitle())}
-            className="btn-ghost rounded-lg px-3 py-2 text-sm"
-          >
-            ⤓ CSV
-          </button>
-          <button
-            onClick={() => downloadExcel(`serene-marquee-payroll-${month}`, exportColumns, visibleEmployees.map((emp) => ({ emp })), exportTitle())}
-            className="btn-ghost rounded-lg px-3 py-2 text-sm"
-          >
+          <button onClick={handleExport} className="btn-ghost rounded-lg px-3 py-2 text-sm">
             ⤓ Excel
           </button>
           {!readOnly && (
@@ -448,7 +542,7 @@ export default function SalariesPage() {
       {readOnly && <ReadOnlyNotice what="payroll" />}
       {error && !modal && <div className="text-rose text-sm font-semibold my-2">{error}</div>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 my-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 sm:gap-4 my-4">
         <div className="card">
           <div className="text-[11.5px] text-muted uppercase font-semibold">Base Payroll</div>
           <div className="text-xl font-bold font-serif mt-1.5">{money(totalBase)}</div>
@@ -468,6 +562,10 @@ export default function SalariesPage() {
         <div className="card">
           <div className="text-[11.5px] text-muted uppercase font-semibold">Remaining</div>
           <div className="text-xl font-bold font-serif text-rose mt-1.5">{money(totalNet - totalPaid)}</div>
+        </div>
+        <div className="card">
+          <div className="text-[11.5px] text-muted uppercase font-semibold">Loans Outstanding</div>
+          <div className="text-xl font-bold font-serif text-rose mt-1.5">{money(totalOutstandingLoans)}</div>
         </div>
       </div>
 
@@ -533,7 +631,7 @@ export default function SalariesPage() {
             {showLeavers ? "Hide past employees" : `Show past employees (${employees.length - activeEmployees.length})`}
           </button>
         </div>
-        <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[860px] text-[13px]">
+        <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[980px] text-[13px]">
           <thead>
             <tr className="text-left text-muted text-[11px] uppercase tracking-wide border-b border-border">
               <th className="py-2 px-2">Employee</th>
@@ -542,6 +640,7 @@ export default function SalariesPage() {
               <th className="py-2 px-2">Bonus</th>
               <th className="py-2 px-2">Deductions</th>
               <th className="py-2 px-2">Net Payable</th>
+              <th className="py-2 px-2">Loan / Advance Balance</th>
               <th className="py-2 px-2">{monthName(month)}</th>
               <th className="py-2 px-2"></th>
             </tr>
@@ -552,6 +651,7 @@ export default function SalariesPage() {
               const bonus = bonusFor(emp.id);
               const deduction = deductionFor(emp.id);
               const rowAdjustments = adjustmentsFor(emp.id);
+              const loans = loanBreakdownFor(emp.id);
               return (
                 <tr key={emp.id} className={`border-b border-border last:border-0 ${emp.active ? "" : "opacity-60"}`}>
                   <td className="py-2.5 px-2 font-semibold">
@@ -590,6 +690,20 @@ export default function SalariesPage() {
                     )}
                   </td>
                   <td className="py-2.5 px-2 font-bold">{money(netFor(emp))}</td>
+                  <td className="py-2.5 px-2">
+                    {loans.total > 0 ? (
+                      <>
+                        <span className="font-bold text-rose">{money(loans.total)}</span>
+                        <div className="text-[10px] text-muted font-normal leading-snug mt-0.5">
+                          {loans.loan > 0 && <div>Loan {money(loans.loan)}</div>}
+                          {loans.advance > 0 && <div>Advance {money(loans.advance)}</div>}
+                          {loans.monthlyCut > 0 && <div>Cut {money(loans.monthlyCut)}/month</div>}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-muted">Clear</span>
+                    )}
+                  </td>
                   <td className="py-2.5 px-2">
                     {paid ? (
                       <span className="inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-primary-dim text-gold-deep">

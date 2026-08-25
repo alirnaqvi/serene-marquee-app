@@ -14,12 +14,15 @@ export type Menu = {
   items: string;
 };
 
+// Every add-on is priced PER HEAD — quantity always follows the guaranteed
+// guest count. default_qty_mode is retained so old rows still parse, but it is
+// no longer read anywhere: treat every item as per head.
 export type AddonItem = {
   id: string;
   category: string;
   name: string;
   price: number;
-  default_qty_mode: "guests" | "one";
+  default_qty_mode?: "guests" | "one";
   sort_order: number;
 };
 
@@ -88,10 +91,10 @@ export function isReadOnlyRole(role: Role): boolean {
 // enforce_discount_limit() trigger in the database.
 // ---------------------------------------------------------------------------
 export const DISCOUNT_LIMITS: Record<Role, number> = {
-  owner: 0,             // monitor only
+  owner: 0,                // monitor only
   staff: 0,
-  manager: 30000,       // currently Zain Syed
-  general_manager: 50000, // currently Ikram Abbasi
+  manager: 50000,          // currently Zain Syed
+  general_manager: 100000, // currently Ikram Abbasi
   admin: Infinity,
   developer: Infinity,
 };
@@ -227,6 +230,21 @@ export type Vendor = {
   notes: string | null;
   active: boolean;
   sort_order: number;
+  created_at: string;
+};
+
+// One line of a vendor's account diary.
+//   credit = a bill received from the vendor (increases what we owe)
+//   debit  = a payment made to the vendor    (reduces what we owe)
+export type VendorTransaction = {
+  id: string;
+  vendor_id: string;
+  txn_date: string;
+  description: string | null;
+  debit: number;
+  credit: number;
+  ledger_entry_id: string | null;
+  created_by: string | null;
   created_at: string;
 };
 
