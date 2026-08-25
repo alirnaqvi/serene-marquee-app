@@ -9,6 +9,7 @@ import { SESSION_TIMES, ENTRY_TEST_RATE } from "@/lib/constants";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { generateDocumentPdf } from "@/lib/generateAgreementPdf";
 import AlertModal from "@/components/AlertModal";
+import { useSession } from "@/components/SessionContext";
 import { bookingRef } from "@/types";
 import type { Booking, Venue, Menu, BookingAddon } from "@/types";
 
@@ -16,6 +17,7 @@ export default function BookingDetailPage() {
   const params = useParams();
   const router = useRouter();
   const supabase = createClient();
+  const { readOnly, canViewLedger } = useSession();
   const [booking, setBooking] = useState<Booking | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
@@ -23,6 +25,14 @@ export default function BookingDetailPage() {
   const [loading, setLoading] = useState(true);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+
+  // Advance refund (only offered once a booking is cancelled)
+  const [showRefund, setShowRefund] = useState(false);
+  const [refundAmount, setRefundAmount] = useState<number | "">("");
+  const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
+  const [refundNote, setRefundNote] = useState("");
+  const [refunding, setRefunding] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
 
   async function load() {
     const [{ data: v }, { data: m }, { data: b }, { data: a }] = await Promise.all([
@@ -50,6 +60,7 @@ export default function BookingDetailPage() {
   const t = chargesFromBooking(booking, venues, menus);
   const isCancelled = booking.status === "Cancelled";
   const isEntryTest = booking.function_type === "Entry Test";
+  const canRefund = isCancelled && booking.advance > 0 && !booking.advance_refunded && !readOnly;
 
   async function handleDownloadPdf(docType: "Agreement" | "Invoice" | "Quotation") {
     let logoDataUri: string | undefined;
@@ -72,33 +83,113 @@ export default function BookingDetailPage() {
     await supabase.from("bookings").update({ status: "Cancelled" }).eq("id", booking!.id);
     setShowCancelConfirm(false);
     setCancelling(false);
+    await load();
+    // If money was already taken, prompt for the refund decision right away.
+    if (booking!.advance > 0 && !booking!.advance_refunded) openRefund();
+  }
+
+  function openRefund() {
+    setRefundAmount(booking!.advance);
+    setRefundDate(new Date().toISOString().slice(0, 10));
+    setRefundNote("");
+    setRefundError(null);
+    setShowRefund(true);
+  }
+
+  async function handleRefund() {
+    if (!booking) return;
+    const amount = Number(refundAmount) || 0;
+    if (amount <= 0) return setRefundError("Enter the amount being returned to the client.");
+    if (amount > booking.advance) return setRefundError("The refund can't be more than the advance received.");
+
+    setRefunding(true);
+    setRefundError(null);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const { error: updError } = await supabase
+      .from("bookings")
+      .update({
+        advance_refunded: true,
+        refund_amount: amount,
+        refunded_at: new Date().toISOString(),
+      })
+      .eq("id", booking.id);
+
+    if (updError) {
+      setRefundError(updError.message);
+      setRefunding(false);
+      return;
+    }
+
+    // Money leaving the till gets its own ledger expense, so the daily
+    // balance stays honest. If this account has no ledger access, RLS
+    // rejects the insert silently — the refund is still recorded on the
+    // booking itself.
+    await supabase.from("ledger_entries").insert({
+      entry_date: refundDate,
+      type: "expense",
+      description: `Refund of advance — ${booking.client} (${bookingRef(booking)}, cancelled)${
+        refundNote.trim() ? ` — ${refundNote.trim()}` : ""
+      }`,
+      amount,
+      booking_id: booking.id,
+      handed_to: booking.client,
+      category: "refund",
+      created_by: user?.id,
+    });
+
+    setShowRefund(false);
+    setRefunding(false);
     load();
   }
 
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <button onClick={() => router.back()} className="text-xs font-bold text-gold-deep hover:underline">
           &larr; Back
         </button>
-        {!isCancelled && (
-          <div className="flex gap-2">
-            <Link href={`/bookings/${booking.id}/edit`} className="btn-ghost rounded-lg px-3.5 py-1.5 text-xs">
-              Edit / Reschedule
-            </Link>
-            <button
-              onClick={() => setShowCancelConfirm(true)}
-              className="text-xs font-semibold text-rose border border-rose/30 rounded-lg px-3.5 py-1.5 hover:bg-rose-light"
-            >
-              Cancel Booking
+        <div className="flex gap-2 flex-wrap">
+          {!isCancelled && !readOnly && (
+            <>
+              <Link href={`/bookings/${booking.id}/edit`} className="btn-ghost rounded-lg px-3.5 py-1.5 text-xs">
+                Edit / Reschedule
+              </Link>
+              <button
+                onClick={() => setShowCancelConfirm(true)}
+                className="text-xs font-semibold text-rose border border-rose/30 rounded-lg px-3.5 py-1.5 hover:bg-rose-light"
+              >
+                Cancel Booking
+              </button>
+            </>
+          )}
+          {canRefund && (
+            <button onClick={openRefund} className="btn-primary rounded-lg px-3.5 py-1.5 text-xs">
+              Refund Advance ({money(booking.advance)})
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {isCancelled && (
         <div className="bg-rose-light text-rose rounded-lg px-3.5 py-2.5 text-[12.5px] font-semibold mb-4">
           This booking has been cancelled. The date/venue/session is free for a new booking.
+          {booking.advance > 0 && !booking.advance_refunded && (
+            <div className="font-normal mt-1">
+              An advance of {money(booking.advance)} is still held against this booking.
+              {readOnly ? "" : " Use “Refund Advance” above once it's returned to the client."}
+            </div>
+          )}
+        </div>
+      )}
+
+      {booking.advance_refunded && (
+        <div className="bg-primary-dim text-gold-deep rounded-lg px-3.5 py-2.5 text-[12.5px] font-semibold mb-4">
+          Advance of {money(booking.refund_amount)} refunded to the client
+          {booking.refunded_at ? ` on ${fmtDMY(booking.refunded_at.slice(0, 10))}` : ""}.
+          {canViewLedger && " It has been posted to the ledger as an expense."}
         </div>
       )}
 
@@ -208,9 +299,15 @@ export default function BookingDetailPage() {
           <div className="text-right font-bold text-gold-deep">- {money(t.discountAmount)}</div>
           <div className="text-gold-deep opacity-85">Advance Paid</div>
           <div className="text-right font-bold text-gold-deep">- {money(booking.advance)}</div>
+          {booking.advance_refunded && (
+            <>
+              <div className="text-gold-deep opacity-85">Advance Refunded</div>
+              <div className="text-right font-bold text-gold-deep">+ {money(booking.refund_amount)}</div>
+            </>
+          )}
           <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-2 mt-1 flex justify-between text-base font-bold text-primary">
             <span>Balance Due</span>
-            <span>{money(t.balance)}</span>
+            <span>{money(t.balance + (booking.advance_refunded ? booking.refund_amount : 0))}</span>
           </div>
         </div>
 
@@ -225,12 +322,69 @@ export default function BookingDetailPage() {
       {showCancelConfirm && (
         <AlertModal
           title="Cancel this booking?"
-          message={`This will mark ${booking.client}'s booking as Cancelled and free up ${venueList.map(v=>v.name).join(" + ")} for ${booking.session} on ${fmtDMY(booking.event_date)}. This can't be undone from here.`}
+          message={`This will mark ${booking.client}'s booking as Cancelled and free up ${venueList.map(v=>v.name).join(" + ")} for ${booking.session} on ${fmtDMY(booking.event_date)}.${
+            booking.advance > 0
+              ? ` An advance of ${money(booking.advance)} was received — you'll be asked next whether to refund it.`
+              : ""
+          }`}
           tone="danger"
           confirmLabel={cancelling ? "Cancelling…" : "Cancel Booking"}
           onConfirm={handleCancel}
           onClose={() => setShowCancelConfirm(false)}
         />
+      )}
+
+      {showRefund && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-6">
+          <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-border bg-gold-light">
+              <div className="font-bold text-sm text-gold-deep">Refund advance payment</div>
+              <div className="text-xs text-muted mt-0.5">
+                {booking.client} · {bookingRef(booking)} · advance received {money(booking.advance)}
+              </div>
+            </div>
+            <div className="px-5 py-4 flex flex-col gap-3">
+              {refundError && <div className="text-rose text-[12.5px] font-semibold">{refundError}</div>}
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Amount Refunded</label>
+                <input
+                  type="number"
+                  className="w-full mt-1"
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                />
+                <div className="text-[11px] text-muted mt-1">
+                  Reduce this if part of the advance is being retained (e.g. the non-refundable token).
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Refund Date</label>
+                <input type="date" className="w-full mt-1" value={refundDate} onChange={(e) => setRefundDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Note (optional)</label>
+                <input
+                  className="w-full mt-1"
+                  value={refundNote}
+                  onChange={(e) => setRefundNote(e.target.value)}
+                  placeholder="e.g. token retained, balance returned in cash"
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3.5 border-t border-border flex justify-end gap-2">
+              <button onClick={() => setShowRefund(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">
+                Not Now
+              </button>
+              <button
+                onClick={handleRefund}
+                disabled={refunding}
+                className="btn-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+              >
+                {refunding ? "Recording…" : "Record Refund"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
+import { fmtDMY } from "@/lib/dateFormat";
+import { useSession } from "@/components/SessionContext";
 import { bookingRef } from "@/types";
 import type { Booking, Venue, Menu } from "@/types";
 
@@ -24,14 +26,24 @@ function statusPill(status: string) {
   );
 }
 
+// Strip everything except digits so "SM-000123", "sm 123" and "123" all match
+// booking number 123.
+function digitsOnly(s: string) {
+  return s.replace(/\D/g, "");
+}
+
 export default function BookingsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
+  const { readOnly } = useSession();
   const [venues, setVenues] = useState<Venue[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [search, setSearch] = useState(searchParams.get("date") || "");
+  const [search, setSearch] = useState("");
+  // Date is a separate field with a real calendar picker, so nobody has to
+  // guess whether to type 09-12-2026 or 12-09-2026.
+  const [dateFilter, setDateFilter] = useState(searchParams.get("date") || "");
 
   useEffect(() => {
     async function load() {
@@ -59,10 +71,26 @@ export default function BookingsPage() {
   const venueNames = (b: Booking) => b.venues.map((id) => venues.find((v) => v.id === id)?.name).filter(Boolean).join(" + ");
 
   const rows = useMemo(() => {
-    return bookings.filter(
-      (b) => !search || b.client.toLowerCase().includes(search.toLowerCase()) || b.event_date.includes(search)
-    );
-  }, [bookings, search]);
+    const q = search.trim().toLowerCase();
+    const qDigits = digitsOnly(q);
+
+    return bookings.filter((b) => {
+      if (dateFilter && b.event_date !== dateFilter) return false;
+      if (!q) return true;
+
+      // Client name
+      if (b.client.toLowerCase().includes(q)) return true;
+      // Order / booking number — matches "SM-000123", "123", or the raw ref
+      if (bookingRef(b).toLowerCase().includes(q)) return true;
+      if (qDigits && b.booking_number && String(b.booking_number).includes(qDigits)) return true;
+      // Phone is a handy extra when someone calls in about their booking
+      if (qDigits.length >= 4 && (b.phone || "").replace(/\D/g, "").includes(qDigits)) return true;
+
+      return false;
+    });
+  }, [bookings, search, dateFilter]);
+
+  const filtering = Boolean(search.trim() || dateFilter);
 
   return (
     <div>
@@ -71,19 +99,51 @@ export default function BookingsPage() {
           <div className="text-xl font-bold font-serif text-primary">Bookings & Agreements</div>
           <div className="text-xs text-muted mt-0.5">All confirmed and tentative functions</div>
         </div>
-        <button onClick={() => router.push("/bookings/new")} className="btn-primary rounded-lg px-4 py-2 text-sm">
-          + New Booking
+        {!readOnly && (
+          <button onClick={() => router.push("/bookings/new")} className="btn-primary rounded-lg px-4 py-2 text-sm">
+            + New Booking
+          </button>
+        )}
+      </div>
+
+      <div className="my-4 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-end">
+        <div>
+          <label className="text-xs font-bold text-muted uppercase">Search</label>
+          <input
+            className="w-full mt-1"
+            placeholder="Client name or order number (e.g. Ahmed Khan, SM-000123, 123)…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-bold text-muted uppercase">Function Date</label>
+          <input
+            type="date"
+            className="w-full mt-1"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+          />
+        </div>
+        <button
+          onClick={() => {
+            setSearch("");
+            setDateFilter("");
+          }}
+          disabled={!filtering}
+          className="btn-ghost rounded-lg px-4 py-2 text-sm disabled:opacity-40 h-[38px]"
+        >
+          Clear
         </button>
       </div>
 
-      <div className="my-4">
-        <input
-          className="w-full"
-          placeholder="Search by client name or date (YYYY-MM-DD)..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
+      {filtering && (
+        <div className="text-[11.5px] text-muted mb-3">
+          {rows.length} booking{rows.length === 1 ? "" : "s"} found
+          {dateFilter && <> on {fmtDMY(dateFilter)}</>}
+          {search.trim() && <> matching “{search.trim()}”</>}
+        </div>
+      )}
 
       <div className="card">
         <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[560px] text-[13px]">

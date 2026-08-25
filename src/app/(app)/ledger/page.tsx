@@ -5,14 +5,27 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/calculations";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
+import {
+  downloadCsv,
+  downloadExcel,
+  monthName,
+  currentMonth,
+  recentMonths,
+  type ExportColumn,
+} from "@/lib/exportLedger";
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
+import { useSession, ReadOnlyNotice } from "@/components/SessionContext";
 import type { LedgerEntry } from "@/types";
 
 type NumField = number | "";
+type Row = LedgerEntry & { running: number };
+
+const ALL_MONTHS = "__all__";
 
 export default function LedgerPage() {
   const supabase = createClient();
+  const { readOnly } = useSession();
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   const [restricted, setRestricted] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -23,6 +36,7 @@ export default function LedgerPage() {
   const [handedTo, setHandedTo] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<LedgerEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [month, setMonth] = useState<string>(currentMonth());
 
   async function load() {
     // Joins the recording staff member's name in the same query — shown in
@@ -50,7 +64,9 @@ export default function LedgerPage() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const rows = useMemo(() => {
+  // Running balance is always computed over the full history so the figure
+  // stays true even when the view is narrowed to one month.
+  const allRows: Row[] = useMemo(() => {
     let running = 0;
     return [...(entries || [])]
       .sort((a, b) => a.entry_date.localeCompare(b.entry_date) || a.created_at.localeCompare(b.created_at))
@@ -60,10 +76,17 @@ export default function LedgerPage() {
       });
   }, [entries]);
 
-  const income = (entries || []).filter((e) => e.type === "income").reduce((s, e) => s + e.amount, 0);
-  const expense = (entries || []).filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0);
+  const rows = useMemo(
+    () => (month === ALL_MONTHS ? allRows : allRows.filter((e) => e.entry_date.slice(0, 7) === month)),
+    [allRows, month]
+  );
+
+  const income = rows.filter((e) => e.type === "income").reduce((s, e) => s + e.amount, 0);
+  const expense = rows.filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0);
+  const periodLabel = month === ALL_MONTHS ? "All Time" : monthName(month);
 
   async function handleSave() {
+    if (readOnly) return;
     if (!desc.trim() || !amount) return;
     const {
       data: { user },
@@ -83,11 +106,48 @@ export default function LedgerPage() {
   }
 
   async function handleDelete() {
-    if (!deleteTarget) return;
+    if (!deleteTarget || readOnly) return;
     setDeleting(true);
     await supabase.from("ledger_entries").delete().eq("id", deleteTarget.id);
     setDeleteTarget(null);
     setDeleting(false);
+  }
+
+  // ---- Month-end export -----------------------------------------------
+  const exportColumns: ExportColumn<Row>[] = [
+    { header: "Date", value: (e) => fmtDMY(e.entry_date) },
+    { header: "Description", value: (e) => e.description },
+    { header: "Handed To", value: (e) => e.handed_to || "" },
+    { header: "Type", value: (e) => (e.type === "income" ? "Income" : "Expense") },
+    { header: "Income (Rs.)", value: (e) => (e.type === "income" ? Math.round(e.amount) : "") },
+    { header: "Expense (Rs.)", value: (e) => (e.type === "expense" ? Math.round(e.amount) : "") },
+    { header: "Running Balance (Rs.)", value: (e) => Math.round(e.running) },
+    { header: "Recorded By", value: (e) => e.profiles?.full_name || "" },
+    { header: "Recorded On", value: (e) => fmtDMYTime(new Date(e.created_at)) },
+  ];
+
+  function fileBase() {
+    const stamp = month === ALL_MONTHS ? "all-time" : month;
+    return `serene-marquee-ledger-${stamp}`;
+  }
+
+  function titleLines() {
+    return [
+      "Serene Marquee — Daily Ledger",
+      `Period: ${periodLabel}`,
+      `Total Income: Rs. ${Math.round(income).toLocaleString("en-PK")}`,
+      `Total Expense: Rs. ${Math.round(expense).toLocaleString("en-PK")}`,
+      `Net: Rs. ${Math.round(income - expense).toLocaleString("en-PK")}`,
+      `Generated: ${fmtDMYTime(new Date())}`,
+    ];
+  }
+
+  function handleExportCsv() {
+    downloadCsv(fileBase(), exportColumns, rows, titleLines());
+  }
+
+  function handleExportExcel() {
+    downloadExcel(fileBase(), exportColumns, rows, titleLines());
   }
 
   if (restricted) {
@@ -109,36 +169,79 @@ export default function LedgerPage() {
           <div className="text-xl font-bold font-serif text-primary">Daily Ledger</div>
           <div className="text-xs text-muted mt-0.5">Income and expenses — replaces the paper روزنامچہ</div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Link href="/ledger/salaries" className="btn-ghost rounded-lg px-4 py-2 text-sm">
             Payroll / Salaries
           </Link>
-          <button onClick={() => setShowForm(true)} className="btn-primary rounded-lg px-4 py-2 text-sm">
-            + Add Entry
+          <Link href="/ledger/vendors" className="btn-ghost rounded-lg px-4 py-2 text-sm">
+            Vendors
+          </Link>
+          {!readOnly && (
+            <button onClick={() => setShowForm(true)} className="btn-primary rounded-lg px-4 py-2 text-sm">
+              + Add Entry
+            </button>
+          )}
+        </div>
+      </div>
+
+      {readOnly && <ReadOnlyNotice what="the ledger" />}
+
+      {/* Month picker + month-end download */}
+      <div className="card my-4 flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <label className="text-xs font-bold text-muted uppercase">Showing</label>
+          <select className="mt-1 text-sm" value={month} onChange={(e) => setMonth(e.target.value)}>
+            {recentMonths(24).map((m) => (
+              <option key={m} value={m}>
+                {monthName(m)}
+              </option>
+            ))}
+            <option value={ALL_MONTHS}>All time</option>
+          </select>
+        </div>
+        <div className="flex items-end gap-2">
+          <div className="text-[11.5px] text-muted mr-1 mb-2 hidden sm:block">
+            {rows.length} entr{rows.length === 1 ? "y" : "ies"} in {periodLabel}
+          </div>
+          <button
+            onClick={handleExportCsv}
+            disabled={rows.length === 0}
+            className="btn-ghost rounded-lg px-3.5 py-2 text-sm disabled:opacity-40"
+          >
+            ⤓ CSV
+          </button>
+          <button
+            onClick={handleExportExcel}
+            disabled={rows.length === 0}
+            className="btn-primary rounded-lg px-3.5 py-2 text-sm disabled:opacity-40"
+          >
+            ⤓ Excel
           </button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 my-4">
         <div className="card">
-          <div className="text-[11.5px] text-muted uppercase font-semibold">Total Income</div>
+          <div className="text-[11.5px] text-muted uppercase font-semibold">Income — {periodLabel}</div>
           <div className="text-2xl font-bold font-serif text-gold-deep mt-1.5">{money(income)}</div>
         </div>
         <div className="card">
-          <div className="text-[11.5px] text-muted uppercase font-semibold">Total Expense</div>
+          <div className="text-[11.5px] text-muted uppercase font-semibold">Expense — {periodLabel}</div>
           <div className="text-2xl font-bold font-serif text-rose mt-1.5">{money(expense)}</div>
         </div>
         <div className="card">
-          <div className="text-[11.5px] text-muted uppercase font-semibold">Net Balance</div>
+          <div className="text-[11.5px] text-muted uppercase font-semibold">Net — {periodLabel}</div>
           <div className="text-2xl font-bold font-serif mt-1.5">{money(income - expense)}</div>
         </div>
         <div className="card">
-          <div className="text-[11.5px] text-muted uppercase font-semibold">Entries</div>
-          <div className="text-2xl font-bold font-serif mt-1.5">{entries?.length || 0}</div>
+          <div className="text-[11.5px] text-muted uppercase font-semibold">Balance Carried</div>
+          <div className="text-2xl font-bold font-serif mt-1.5">
+            {money(rows.length ? rows[rows.length - 1].running : 0)}
+          </div>
         </div>
       </div>
 
-      {showForm && (
+      {showForm && !readOnly && (
         <div className="card mb-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -195,10 +298,17 @@ export default function LedgerPage() {
               <th className="py-2 px-2">Amount</th>
               <th className="py-2 px-2">Running Balance</th>
               <th className="py-2 px-2">Recorded By</th>
-              <th className="py-2 px-2"></th>
+              {!readOnly && <th className="py-2 px-2"></th>}
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={readOnly ? 7 : 8} className="text-center py-8 text-muted text-sm">
+                  No entries recorded for {periodLabel}
+                </td>
+              </tr>
+            )}
             {rows.map((e) => (
               <tr key={e.id} className="border-b border-border last:border-0 hover:bg-[#FBF8ED]">
                 <td className="py-2.5 px-2">{fmtDMY(e.entry_date)}</td>
@@ -223,15 +333,17 @@ export default function LedgerPage() {
                   <br />
                   <span className="text-[10px]">{fmtDMYTime(new Date(e.created_at))}</span>
                 </td>
-                <td className="py-2.5 px-2">
-                  <button
-                    onClick={() => setDeleteTarget(e)}
-                    className="text-[11px] font-semibold text-rose hover:underline"
-                    title="Delete this entry"
-                  >
-                    Delete
-                  </button>
-                </td>
+                {!readOnly && (
+                  <td className="py-2.5 px-2">
+                    <button
+                      onClick={() => setDeleteTarget(e)}
+                      className="text-[11px] font-semibold text-rose hover:underline"
+                      title="Delete this entry"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

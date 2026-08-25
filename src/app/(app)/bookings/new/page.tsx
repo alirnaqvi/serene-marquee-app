@@ -10,6 +10,8 @@ import type { Venue, Menu, Booking, AddonItem } from "@/types";
 import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
+import DiscountField, { discountError } from "@/components/DiscountField";
+import { useSession } from "@/components/SessionContext";
 
 const CUSTOM_MENU_VALUE = "__custom__";
 type NumField = number | "";
@@ -24,6 +26,7 @@ export default function NewBookingPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
+  const { role, discountLimit, readOnly } = useSession();
 
   const [venues, setVenues] = useState<Venue[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
@@ -179,6 +182,11 @@ export default function NewBookingPage() {
     if (!date) return setError("Please choose a function date.");
     if (date < todayIso()) return setError("You can't book a date that has already passed. Please choose today or a future date.");
     if (selectedVenues.length === 0) return setError("Please select at least one venue.");
+    // Discount authority is capped per role (Manager Rs. 30,000 / General
+    // Manager Rs. 50,000). The database enforces the same rule, so this is
+    // only here to fail fast with a friendlier message.
+    const discErr = discountError(n(discount), discountLimit, role);
+    if (discErr) return setError(discErr);
     if (isCustomMenu && customSelection.length === 0) {
       return setError("Please pick at least one item for the Customized Menu, or choose a regular menu instead.");
     }
@@ -263,6 +271,20 @@ export default function NewBookingPage() {
     }
 
     router.push(`/bookings/${inserted.id}`);
+  }
+
+  // Owner / CEO accounts are monitor-only — block the form outright rather
+  // than letting them fill it in and hit a database rejection on save.
+  if (readOnly) {
+    return (
+      <div className="card max-w-md">
+        <div className="text-[14.5px] font-bold text-primary mb-2">View-only access</div>
+        <div className="text-sm text-muted">
+          Your account can monitor every booking but cannot create bookings. Ask a manager to make
+          the change for you.
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -457,16 +479,7 @@ export default function NewBookingPage() {
               )}
             </div>
           )}
-          <div>
-            <label className="text-xs font-bold text-muted uppercase">Discount (Rs.)</label>
-            <input
-              type="number"
-              className="w-full mt-1"
-              value={discount}
-              placeholder="0"
-              onChange={(e) => setDiscount(e.target.value === "" ? "" : Number(e.target.value))}
-            />
-          </div>
+          <DiscountField value={discount} onChange={setDiscount} />
           <div>
             <label className="text-xs font-bold text-muted uppercase">Filer Status</label>
             <select className="w-full mt-1" value={filer} onChange={(e) => setFiler(e.target.value as any)}>

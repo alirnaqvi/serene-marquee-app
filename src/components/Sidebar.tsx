@@ -12,9 +12,10 @@ import {
   UserCircle,
   LogOut,
   Wrench,
+  LifeBuoy,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { ROLE_LABELS, type Role } from "@/types";
+import { ROLE_LABELS, isReadOnlyRole, type Role } from "@/types";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutGrid },
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { href: "/bookings", label: "Bookings", icon: BookOpen },
   { href: "/ledger", label: "Ledger", icon: Wallet, ledgerOnly: true },
   { href: "/menus", label: "Menus & Venues", icon: UtensilsCrossed },
+  { href: "/support", label: "Help & Support", icon: LifeBuoy },
   { href: "/admin/staff", label: "Staff & Access", icon: KeyRound, staffPageOnly: true },
   { href: "/dev", label: "Developer Console", icon: Wrench, devOnly: true },
   { href: "/profile", label: "Profile", icon: UserCircle },
@@ -56,6 +58,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const readOnly = isReadOnlyRole(role);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -113,7 +116,10 @@ export default function Sidebar({
           </div>
           <div className="min-w-0">
             <div className="text-[12px] font-semibold text-[#EAE3CC] truncate">{fullName}</div>
-            <div className="text-[10px] text-[#8C7F5C]">{ROLE_LABELS[role]}</div>
+            <div className="text-[10px] text-[#8C7F5C]">
+              {ROLE_LABELS[role]}
+              {readOnly && " · monitor only"}
+            </div>
           </div>
         </div>
         <button

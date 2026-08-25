@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { ROLE_LABELS, STAFF_EDIT_ROLES, STAFF_VIEW_ROLES, LEDGER_ROLES, type Profile } from "@/types";
+import {
+  ROLE_LABELS,
+  STAFF_EDIT_ROLES,
+  STAFF_VIEW_ROLES,
+  LEDGER_ROLES,
+  discountLimitLabel,
+  isReadOnlyRole,
+  type Profile,
+} from "@/types";
 
 export default function StaffAdminPage() {
   const supabase = createClient();
@@ -85,6 +93,7 @@ export default function StaffAdminPage() {
               <th className="py-2 px-2">Name</th>
               <th className="py-2 px-2">Role</th>
               <th className="py-2 px-2">Ledger Access</th>
+              <th className="py-2 px-2">Discount Limit</th>
               <th className="py-2 px-2">Joined</th>
             </tr>
           </thead>
@@ -138,6 +147,12 @@ export default function StaffAdminPage() {
                       <span className="text-[12.5px]">{p.can_view_ledger ? "Enabled" : "Disabled"}</span>
                     )}
                   </td>
+                  <td className="py-2.5 px-2 text-[12px]">
+                    {discountLimitLabel(p.role)}
+                    {isReadOnlyRole(p.role) && (
+                      <div className="text-[10.5px] text-muted">Monitor only — cannot edit anything</div>
+                    )}
+                  </td>
                   <td className="py-2.5 px-2 text-muted text-[12px]">
                     {p.created_at
                       ? new Date(p.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
@@ -148,6 +163,30 @@ export default function StaffAdminPage() {
             })}
           </tbody>
         </table></div>
+      </div>
+
+      <div className="card mt-4">
+        <div className="text-[13px] font-bold text-primary mb-2">Role Policy</div>
+        <ul className="text-[12.5px] text-muted list-disc pl-5 flex flex-col gap-1">
+          <li>
+            <b className="text-primary">Manager</b> — may approve up to{" "}
+            <b className="text-primary">Rs. 30,000</b> discount per booking.
+          </li>
+          <li>
+            <b className="text-primary">General Manager</b> — may approve up to{" "}
+            <b className="text-primary">Rs. 50,000</b> discount per booking.
+          </li>
+          <li>
+            <b className="text-primary">Owner / CEO</b> — monitor only. Can view every screen they have access
+            to, but cannot create, edit or delete anything.
+          </li>
+          <li>
+            <b className="text-primary">Admin / Developer</b> — no discount ceiling.
+          </li>
+        </ul>
+        <div className="text-[11px] text-muted mt-2.5">
+          These limits are enforced in the database as well as the screens, so they hold even outside the app.
+        </div>
       </div>
 
       {canEdit && (
