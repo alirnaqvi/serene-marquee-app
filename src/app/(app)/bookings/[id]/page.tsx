@@ -10,7 +10,7 @@ import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { generateDocumentPdf } from "@/lib/generateAgreementPdf";
 import AlertModal from "@/components/AlertModal";
 import { useSession } from "@/components/SessionContext";
-import { bookingRef } from "@/types";
+import { bookingRef, clientName } from "@/types";
 import type { Booking, Venue, Menu, BookingAddon } from "@/types";
 
 export default function BookingDetailPage() {
@@ -130,12 +130,12 @@ export default function BookingDetailPage() {
     await supabase.from("ledger_entries").insert({
       entry_date: refundDate,
       type: "expense",
-      description: `Refund of advance — ${booking.client} (${bookingRef(booking)}, cancelled)${
+      description: `Refund of advance — ${clientName(booking)} (${bookingRef(booking)}, cancelled)${
         refundNote.trim() ? ` — ${refundNote.trim()}` : ""
       }`,
       amount,
       booking_id: booking.id,
-      handed_to: booking.client,
+      handed_to: clientName(booking),
       category: "refund",
       created_by: user?.id,
     });
@@ -217,7 +217,7 @@ export default function BookingDetailPage() {
         </div>
 
         <div className="mt-4 divide-y divide-dashed divide-border text-[13px]">
-          <Row k="Host / Organization" v={booking.client} />
+          <Row k="Host / Organization" v={clientName(booking)} />
           <Row k="CNIC" v={booking.cnic || "—"} />
           <Row k="Contact Number(s)" v={booking.phone2 ? `${booking.phone || "—"}  /  ${booking.phone2}` : booking.phone || "—"} />
           <Row k="Email" v={booking.email || "—"} />
@@ -322,7 +322,7 @@ export default function BookingDetailPage() {
       {showCancelConfirm && (
         <AlertModal
           title="Cancel this booking?"
-          message={`This will mark ${booking.client}'s booking as Cancelled and free up ${venueList.map(v=>v.name).join(" + ")} for ${booking.session} on ${fmtDMY(booking.event_date)}.${
+          message={`This will mark ${clientName(booking)}'s booking as Cancelled and free up ${venueList.map(v=>v.name).join(" + ")} for ${booking.session} on ${fmtDMY(booking.event_date)}.${
             booking.advance > 0
               ? ` An advance of ${money(booking.advance)} was received — you'll be asked next whether to refund it.`
               : ""
@@ -340,7 +340,7 @@ export default function BookingDetailPage() {
             <div className="px-5 py-4 border-b border-border bg-gold-light">
               <div className="font-bold text-sm text-gold-deep">Refund advance payment</div>
               <div className="text-xs text-muted mt-0.5">
-                {booking.client} · {bookingRef(booking)} · advance received {money(booking.advance)}
+                {clientName(booking)} · {bookingRef(booking)} · advance received {money(booking.advance)}
               </div>
             </div>
             <div className="px-5 py-4 flex flex-col gap-3">

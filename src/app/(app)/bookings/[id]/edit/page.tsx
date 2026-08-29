@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
-import { TOKEN_MINIMUM, ENTRY_TEST_RATE } from "@/lib/constants";
-import { FUNCTION_TYPES } from "@/types";
-import type { Venue, Menu, Booking, AddonItem } from "@/types";
+import { CONFIRMATION_MINIMUM, ENTRY_TEST_RATE } from "@/lib/constants";
+import { FUNCTION_TYPES, CLIENT_TITLES, clientName, canConfirmBooking, statusForAdvance } from "@/types";
+import type { Venue, Menu, Booking, AddonItem, ClientTitle } from "@/types";
 import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
@@ -45,6 +45,7 @@ export default function EditBookingPage() {
   const [functionType, setFunctionType] = useState<string>(FUNCTION_TYPES[0]);
   const [functionTypeOther, setFunctionTypeOther] = useState("");
   const [entryTestType, setEntryTestType] = useState("");
+  const [title, setTitle] = useState<ClientTitle | "">("");
   const [client, setClient] = useState("");
   const [phone, setPhone] = useState("");
   const [phone2, setPhone2] = useState("");
@@ -65,6 +66,9 @@ export default function EditBookingPage() {
   const [cooling, setCooling] = useState(false);
   const [advance, setAdvance] = useState<NumField>("");
   const [status, setStatus] = useState<"Tentative" | "Confirmed" | "Cancelled">("Confirmed");
+  // Remembers what the advance was when the booking was loaded, so entering
+  // one for the first time can promote a Tentative booking to Confirmed.
+  const [loadedAdvance, setLoadedAdvance] = useState(0);
   const [notes, setNotes] = useState("");
 
   const isEntryTest = functionType === "Entry Test";
@@ -96,6 +100,7 @@ export default function EditBookingPage() {
         setFunctionType(booking.function_type);
         setFunctionTypeOther(booking.function_type_other || "");
         setEntryTestType(booking.entry_test_type || "");
+        setTitle(booking.title || "");
         setClient(booking.client);
         setPhone(booking.phone || "");
         setPhone2(booking.phone2 || "");
@@ -111,6 +116,7 @@ export default function EditBookingPage() {
         setHeaters(booking.heaters);
         setCooling(booking.cooling);
         setAdvance(booking.advance);
+        setLoadedAdvance(booking.advance);
         setStatus(booking.status);
         setNotes(booking.notes || "");
 
@@ -179,7 +185,7 @@ export default function EditBookingPage() {
 
   function conflictMessage() {
     return `Already booked for ${session} on ${date || "this date"}: ${conflicts
-      .map((c) => `${venues.find((v) => v.id === c.venueId)?.name} (${c.clash.client})`)
+      .map((c) => `${venues.find((v) => v.id === c.venueId)?.name} (${clientName(c.clash)})`)
       .join(", ")}. Choose a different date, session, or venue.`;
   }
 
@@ -208,6 +214,20 @@ export default function EditBookingPage() {
     venues,
     menus
   );
+
+  // Confirmed requires at least Rs. 25,000 in hand. Bringing the advance up to
+  // that threshold promotes a Tentative booking to Confirmed; dropping back
+  // below it returns the booking to Tentative. Cancelled is deliberate and is
+  // never overridden here.
+  useEffect(() => {
+    if (status === "Cancelled") return;
+    if (canConfirmBooking(n(advance)) && !canConfirmBooking(loadedAdvance) && status === "Tentative") {
+      setStatus("Confirmed");
+    }
+  }, [advance, loadedAdvance]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const advancePaid = canConfirmBooking(n(advance));
+  const effectiveStatus = statusForAdvance(n(advance), status);
 
   async function handleSave() {
     setError(null);
@@ -245,6 +265,7 @@ export default function EditBookingPage() {
         venues: selectedVenues,
         session,
         event_date: date,
+        title: title || null,
         client: client.trim(),
         phone,
         phone2,
@@ -267,7 +288,7 @@ export default function EditBookingPage() {
         cooling,
         advance: n(advance),
         notes,
-        status,
+        status: effectiveStatus,
       })
       .eq("id", bookingId);
 
@@ -379,7 +400,31 @@ export default function EditBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Client / Host Name <span className="text-rose">*</span></label>
-            <input className="w-full mt-1" value={client} onChange={(e) => setClient(e.target.value)} placeholder="e.g. Ahmed Family" required />
+            <div className="flex gap-2 mt-1">
+              <select
+                className="w-[88px] shrink-0"
+                value={title}
+                onChange={(e) => setTitle(e.target.value as ClientTitle | "")}
+                aria-label="Title"
+              >
+                <option value="">—</option>
+                {CLIENT_TITLES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="flex-1 min-w-0"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
+                placeholder="e.g. Ahmed Khan"
+                required
+              />
+            </div>
+            <div className="text-[11px] text-muted mt-1">
+              Leave the title blank for a family or an organization.
+            </div>
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Phone Number <span className="text-rose">*</span></label>
@@ -530,7 +575,7 @@ export default function EditBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">
-              Advance Paid <span className="normal-case font-normal">(Rs. {TOKEN_MINIMUM.toLocaleString()} min. token)</span>
+              Advance Paid <span className="normal-case font-normal">(Rs. {CONFIRMATION_MINIMUM.toLocaleString()} min. to confirm)</span>
             </label>
             <input
               type="number"
@@ -542,11 +587,20 @@ export default function EditBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Status</label>
-            <select className="w-full mt-1" value={status} onChange={(e) => setStatus(e.target.value as any)}>
-              <option>Tentative</option>
-              <option>Confirmed</option>
+            <select
+              className="w-full mt-1"
+              value={effectiveStatus}
+              onChange={(e) => setStatus(e.target.value as any)}
+            >
+              <option disabled={!advancePaid && status !== "Tentative"}>Tentative</option>
+              <option disabled={!advancePaid}>Confirmed</option>
               <option>Cancelled</option>
             </select>
+            <div className="text-[11px] text-muted mt-1">
+              {advancePaid
+                ? "Advance received — this booking can be confirmed."
+                : `Tentative until an advance of at least Rs. ${CONFIRMATION_MINIMUM.toLocaleString()} is received.`}
+            </div>
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs font-bold text-muted uppercase">

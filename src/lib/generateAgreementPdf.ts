@@ -3,7 +3,7 @@ import autoTable from "jspdf-autotable";
 import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "./calculations";
 import { SESSION_TIMES, ENTRY_TEST_RATE } from "./constants";
 import { fmtDMY, fmtDMYTime } from "./dateFormat";
-import { bookingRef } from "@/types";
+import { bookingRef, clientName } from "@/types";
 import type { Booking, Venue, Menu, BookingAddon } from "@/types";
 
 const GOLD: [number, number, number] = [138, 106, 30];
@@ -126,7 +126,7 @@ export function generateDocumentPdf(
 
   const details: [string, string][] = [
     ["Booking Reference", bookingRef(booking)],
-    ["Host / Organization", booking.client],
+    ["Host / Organization", clientName(booking)],
     ["CNIC", booking.cnic || "-"],
     ["Contact Number(s)", contactLine],
     ["Email", booking.email || "-"],
@@ -305,7 +305,7 @@ export function generateDocumentPdf(
     doc.text("Reservation Officer Signature", pageW - margin - 154, y + 12);
   }
 
-  const fileName = `Serene-Marquee-${docType}-${bookingRef(booking)}-${booking.client.replace(/[^a-z0-9]+/gi, "-")}-${booking.event_date}.pdf`;
+  const fileName = `Serene-Marquee-${docType}-${bookingRef(booking)}-${clientName(booking).replace(/[^a-z0-9]+/gi, "-")}-${booking.event_date}.pdf`;
   doc.save(fileName);
 }
 

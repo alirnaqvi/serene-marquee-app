@@ -8,7 +8,7 @@ import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import { fmtDMY } from "@/lib/dateFormat";
 import { useSession } from "@/components/SessionContext";
 import { downloadXlsx, monthName, currentMonth, recentMonths, monthBounds, type SheetColumn } from "@/lib/xlsx";
-import { bookingRef } from "@/types";
+import { bookingRef, clientName } from "@/types";
 import type { Booking, Venue, Menu } from "@/types";
 
 function Stat({
@@ -107,7 +107,7 @@ export default function BookingsPage() {
       if (!q) return true;
 
       // Client name
-      if (b.client.toLowerCase().includes(q)) return true;
+      if (clientName(b).toLowerCase().includes(q)) return true;
       // Order / booking number — matches "SM-000123", "123", or the raw ref
       if (bookingRef(b).toLowerCase().includes(q)) return true;
       if (qDigits && b.booking_number && String(b.booking_number).includes(qDigits)) return true;
@@ -170,7 +170,7 @@ export default function BookingsPage() {
     { header: "Ref", value: (b) => bookingRef(b) },
     { header: "Function Date", value: (b) => fmtDMY(b.event_date) },
     { header: "Session", value: (b) => b.session },
-    { header: "Client", value: (b) => b.client, width: 24 },
+    { header: "Client", value: (b) => clientName(b), width: 24 },
     { header: "Phone", value: (b) => b.phone || "", width: 16 },
     { header: "Venue(s)", value: (b) => venueNames(b), width: 22 },
     { header: "Function", value: (b) => functionLabel(b), width: 18 },
@@ -365,7 +365,7 @@ export default function BookingsPage() {
                   </td>
                   <td className="py-2.5 px-2">{venueNames(b)}</td>
                   <td className="py-2.5 px-2">
-                    {b.client}
+                    {clientName(b)}
                     <br />
                     <span className="text-[11px] text-muted">{b.phone}</span>
                   </td>

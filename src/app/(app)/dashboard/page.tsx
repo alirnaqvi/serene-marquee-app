@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CalendarClock, Wallet, TrendingUp, TrendingDown, ArrowUpRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
+import { clientName } from "@/types";
 import type { Venue, Menu } from "@/types";
 
 // This page must never be cached/statically generated — it shows live
@@ -185,7 +186,7 @@ export default async function DashboardPage() {
                       <br />
                       <span className="text-[11px] text-muted">{b.session}</span>
                     </td>
-                    <td className="py-2.5 px-2">{b.client}</td>
+                    <td className="py-2.5 px-2">{clientName(b)}</td>
                     <td className="py-2.5 px-2">{functionLabel(b)}</td>
                     <td className="py-2.5 px-2">{b.guests}</td>
                     <td className="py-2.5 px-2">{statusPill(b.status)}</td>

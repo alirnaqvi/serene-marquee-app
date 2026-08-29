@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { clientName } from "@/types";
 import type { Booking, Venue } from "@/types";
 
 const MONTH_NAMES = [
@@ -89,7 +90,7 @@ export default function CalendarPage() {
       <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
         <div>
           <div className="text-xl font-bold font-serif text-primary">Booking Calendar</div>
-          <div className="text-xs text-muted mt-0.5">Diamond · Gold · Open Area — tap a date to view or add a booking</div>
+          <div className="text-xs text-muted mt-0.5">Venue · session · client — tap a date to view or add a booking</div>
         </div>
         <button onClick={() => router.push("/bookings/new")} className="btn-primary rounded-lg px-4 py-2 text-sm whitespace-nowrap">
           + New Booking
@@ -144,17 +145,21 @@ export default function CalendarPage() {
               <div
                 key={i}
                 onClick={() => handleDayClick(day)}
-                className="min-h-[76px] sm:min-h-[98px] bg-white border border-border rounded-lg p-2 cursor-pointer hover:border-gold flex flex-col gap-1"
+                className="min-h-[86px] sm:min-h-[112px] bg-white border border-border rounded-lg p-2 cursor-pointer hover:border-gold flex flex-col gap-1"
               >
                 <div className="text-[12.5px] font-bold">{day}</div>
                 {bookingsFor(day).map((b) => (
                   <div
                     key={b.id}
+                    title={`${b.venues.map(venueName).join(" + ")} · ${b.session} · ${clientName(b)}`}
                     className={`text-[9.5px] px-1.5 py-0.5 rounded font-bold leading-tight ${
                       b.session === "Lunch" ? "bg-gold-light text-[#8A6427]" : "bg-primary-dim text-gold-deep"
                     }`}
                   >
-                    {b.venues.map(venueName).join("+")}: {b.session}
+                    <div className="truncate">
+                      {b.venues.map(venueName).join("+")}: {b.session}
+                    </div>
+                    <div className="truncate font-semibold opacity-90">{clientName(b)}</div>
                   </div>
                 ))}
               </div>

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, PartyPopper, Ban } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { clientName } from "@/types";
 import { fmtDMYTime } from "@/lib/dateFormat";
 import type { Booking } from "@/types";
 
@@ -51,7 +52,7 @@ export default function NotificationBell() {
             id: `${b.id}-new-${Date.now()}`,
             bookingId: b.id,
             kind: "new",
-            text: `New booking: ${b.client} — ${b.event_date} (${b.session})`,
+            text: `New booking: ${clientName(b)} — ${b.event_date} (${b.session})`,
             at: new Date().toISOString(),
             read: false,
           });
@@ -70,7 +71,7 @@ export default function NotificationBell() {
               id: `${b.id}-cancel-${Date.now()}`,
               bookingId: b.id,
               kind: "cancelled",
-              text: `Booking cancelled: ${b.client} — ${b.event_date} (${b.session})`,
+              text: `Booking cancelled: ${clientName(b)} — ${b.event_date} (${b.session})`,
               at: new Date().toISOString(),
               read: false,
             });

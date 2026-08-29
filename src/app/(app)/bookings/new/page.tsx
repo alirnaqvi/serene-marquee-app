@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
-import { TOKEN_MINIMUM, ENTRY_TEST_RATE } from "@/lib/constants";
-import { FUNCTION_TYPES } from "@/types";
+import { CONFIRMATION_MINIMUM, ENTRY_TEST_RATE } from "@/lib/constants";
+import { FUNCTION_TYPES, CLIENT_TITLES, clientName, canConfirmBooking, type ClientTitle } from "@/types";
 import type { Venue, Menu, Booking, AddonItem } from "@/types";
 import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
 import DateField from "@/components/DateField";
@@ -46,6 +46,7 @@ export default function NewBookingPage() {
   const [functionType, setFunctionType] = useState<string>(FUNCTION_TYPES[0]);
   const [functionTypeOther, setFunctionTypeOther] = useState("");
   const [entryTestType, setEntryTestType] = useState("");
+  const [title, setTitle] = useState<ClientTitle | "">("");
   const [client, setClient] = useState("");
   const [phone, setPhone] = useState("");
   const [phone2, setPhone2] = useState("");
@@ -66,6 +67,12 @@ export default function NewBookingPage() {
   const [cooling, setCooling] = useState(false);
   const [advance, setAdvance] = useState<NumField>("");
   const [status, setStatus] = useState<"Tentative" | "Confirmed">("Confirmed");
+
+  // A booking is only Confirmed once an advance of at least Rs. 25,000 has
+  // been received. Below that the status is forced to Tentative and the
+  // dropdown locks, so it can't be marked Confirmed by mistake.
+  const advancePaid = canConfirmBooking(n(advance));
+  const effectiveStatus: "Tentative" | "Confirmed" = advancePaid ? status : "Tentative";
   const [notes, setNotes] = useState("");
 
   const isEntryTest = functionType === "Entry Test";
@@ -144,7 +151,7 @@ export default function NewBookingPage() {
 
   function conflictMessage() {
     return `Already booked for ${session} on ${date || "this date"}: ${conflicts
-      .map((c) => `${venues.find((v) => v.id === c.venueId)?.name} (${c.clash.client})`)
+      .map((c) => `${venues.find((v) => v.id === c.venueId)?.name} (${clientName(c.clash)})`)
       .join(", ")}. Choose a different date, session, or venue.`;
   }
 
@@ -209,6 +216,7 @@ export default function NewBookingPage() {
         venues: selectedVenues,
         session,
         event_date: date,
+        title: title || null,
         client: client.trim(),
         phone,
         phone2,
@@ -231,7 +239,7 @@ export default function NewBookingPage() {
         cooling,
         advance: n(advance),
         notes,
-        status,
+        status: effectiveStatus,
         created_by: user?.id,
       })
       .select()
@@ -261,7 +269,7 @@ export default function NewBookingPage() {
       await supabase.from("ledger_entries").insert({
         entry_date: date,
         type: "income",
-        description: `Advance — ${client} (${functionType === "Other" ? functionTypeOther : functionType})`,
+        description: `Advance — ${clientName({ title: title || null, client: client.trim() })} (${functionType === "Other" ? functionTypeOther : functionType})`,
         amount: n(advance),
         booking_id: inserted.id,
         created_by: user?.id,
@@ -370,7 +378,31 @@ export default function NewBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Client / Host Name <span className="text-rose">*</span></label>
-            <input className="w-full mt-1" value={client} onChange={(e) => setClient(e.target.value)} placeholder="e.g. Ahmed Family" required />
+            <div className="flex gap-2 mt-1">
+              <select
+                className="w-[88px] shrink-0"
+                value={title}
+                onChange={(e) => setTitle(e.target.value as ClientTitle | "")}
+                aria-label="Title"
+              >
+                <option value="">—</option>
+                {CLIENT_TITLES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="flex-1 min-w-0"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
+                placeholder="e.g. Ahmed Khan"
+                required
+              />
+            </div>
+            <div className="text-[11px] text-muted mt-1">
+              Leave the title blank for a family or an organization.
+            </div>
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Phone Number <span className="text-rose">*</span></label>
@@ -525,7 +557,7 @@ export default function NewBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">
-              Advance Paid <span className="normal-case font-normal">(Rs. {TOKEN_MINIMUM.toLocaleString()} min. token)</span>
+              Advance Paid <span className="normal-case font-normal">(Rs. {CONFIRMATION_MINIMUM.toLocaleString()} min. to confirm)</span>
             </label>
             <input
               type="number"
@@ -537,10 +569,20 @@ export default function NewBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Status</label>
-            <select className="w-full mt-1" value={status} onChange={(e) => setStatus(e.target.value as any)}>
+            <select
+              className="w-full mt-1"
+              value={effectiveStatus}
+              disabled={!advancePaid}
+              onChange={(e) => setStatus(e.target.value as any)}
+            >
               <option>Tentative</option>
               <option>Confirmed</option>
             </select>
+            <div className="text-[11px] text-muted mt-1">
+              {advancePaid
+                ? "Advance received — this booking can be confirmed."
+                : `Tentative until an advance of at least Rs. ${CONFIRMATION_MINIMUM.toLocaleString()} is received.`}
+            </div>
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs font-bold text-muted uppercase">
