@@ -39,8 +39,8 @@ export default function DiscountField({
         min={0}
         max={unlimited ? undefined : discountLimit}
         className={`w-full mt-1 ${overLimit ? "border-rose" : ""}`}
-        value={notPermitted ? 0 : value}
-        placeholder="0"
+        value={notPermitted ? "" : value}
+       
         disabled={notPermitted}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
       />

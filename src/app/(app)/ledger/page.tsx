@@ -254,7 +254,6 @@ export default function LedgerPage() {
                 type="number"
                 className="w-full mt-1"
                 value={amount}
-                placeholder="0"
                 onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))}
               />
             </div>

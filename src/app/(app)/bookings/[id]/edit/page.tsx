@@ -106,16 +106,16 @@ export default function EditBookingPage() {
         setPhone2(booking.phone2 || "");
         setCnic(booking.cnic || "");
         setEmail(booking.email || "");
-        setGuests(booking.guests);
+        setGuests(booking.guests || "");
         setMenuId(booking.is_custom_menu ? CUSTOM_MENU_VALUE : booking.menu_id || (m && m[0]?.id) || "");
         setRemovedMenuItems(booking.removed_menu_items || []);
-        setDiscount(booking.discount);
+        setDiscount(booking.discount || "");
         setReference(booking.reference || "");
         setFiler(booking.filer);
-        setDecoration(booking.decoration);
-        setHeaters(booking.heaters);
+        setDecoration(booking.decoration || "");
+        setHeaters(booking.heaters || "");
         setCooling(booking.cooling);
-        setAdvance(booking.advance);
+        setAdvance(booking.advance || "");
         setLoadedAdvance(booking.advance);
         setStatus(booking.status);
         setNotes(booking.notes || "");
@@ -454,7 +454,6 @@ export default function EditBookingPage() {
               type="number"
               className="w-full mt-1"
               value={guests}
-              placeholder="0"
               onChange={(e) => setGuests(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
@@ -551,7 +550,6 @@ export default function EditBookingPage() {
               type="number"
               className="w-full mt-1"
               value={decoration}
-              placeholder="0"
               onChange={(e) => setDecoration(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
@@ -561,7 +559,6 @@ export default function EditBookingPage() {
               type="number"
               className="w-full mt-1"
               value={heaters}
-              placeholder="0"
               onChange={(e) => setHeaters(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
@@ -581,7 +578,6 @@ export default function EditBookingPage() {
               type="number"
               className="w-full mt-1"
               value={advance}
-              placeholder="0"
               onChange={(e) => setAdvance(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>

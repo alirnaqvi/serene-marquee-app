@@ -432,7 +432,6 @@ export default function NewBookingPage() {
               type="number"
               className="w-full mt-1"
               value={guests}
-              placeholder="0"
               onChange={(e) => setGuests(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
@@ -533,7 +532,6 @@ export default function NewBookingPage() {
               type="number"
               className="w-full mt-1"
               value={decoration}
-              placeholder="0"
               onChange={(e) => setDecoration(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
@@ -543,7 +541,6 @@ export default function NewBookingPage() {
               type="number"
               className="w-full mt-1"
               value={heaters}
-              placeholder="0"
               onChange={(e) => setHeaters(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>
@@ -563,7 +560,6 @@ export default function NewBookingPage() {
               type="number"
               className="w-full mt-1"
               value={advance}
-              placeholder="0"
               onChange={(e) => setAdvance(e.target.value === "" ? "" : Number(e.target.value))}
             />
           </div>

@@ -809,7 +809,6 @@ export default function SalariesPage() {
                       type="number"
                       className="w-full mt-1"
                       value={adjAmount}
-                      placeholder="0"
                       onChange={(e) => setAdjAmount(e.target.value === "" ? "" : Number(e.target.value))}
                     />
                   </Field>
@@ -840,7 +839,6 @@ export default function SalariesPage() {
                       type="number"
                       className="w-full mt-1"
                       value={advAmount}
-                      placeholder="0"
                       onChange={(e) => setAdvAmount(e.target.value === "" ? "" : Number(e.target.value))}
                     />
                   </Field>
@@ -849,7 +847,6 @@ export default function SalariesPage() {
                       type="number"
                       className="w-full mt-1"
                       value={advMonthly}
-                      placeholder="0"
                       onChange={(e) => setAdvMonthly(e.target.value === "" ? "" : Number(e.target.value))}
                     />
                     <div className="text-[11px] text-muted mt-1">
@@ -888,7 +885,6 @@ export default function SalariesPage() {
                       type="number"
                       className="w-full mt-1"
                       value={empSalary}
-                      placeholder="0"
                       onChange={(e) => setEmpSalary(e.target.value === "" ? "" : Number(e.target.value))}
                     />
                   </Field>
