@@ -1,3 +1,5 @@
+import { CONFIRMATION_MINIMUM } from "@/lib/constants";
+
 export type Venue = {
   id: string;
   name: string;
@@ -114,12 +116,17 @@ export type BookingStatus = "Tentative" | "Confirmed" | "Cancelled";
 export type Session = "Lunch" | "Dinner";
 export type FilerStatus = "Filer" | "Non-Filer";
 
+export type ClientTitle = "Mr." | "Mrs." | "Ms.";
+
+export const CLIENT_TITLES: ClientTitle[] = ["Mr.", "Mrs.", "Ms."];
+
 export type Booking = {
   id: string;
   booking_number: number | null; // sequential, human-friendly reference (e.g. shown as SM-000123)
   venues: string[];
   session: Session;
   event_date: string; // ISO date, e.g. 2026-09-12
+  title: ClientTitle | null; // optional — an organization or "Ahmed Family" has none
   client: string;
   phone: string | null;
   phone2: string | null;
@@ -295,6 +302,34 @@ export const TICKET_PRIORITY_LABELS: Record<TicketPriority, string> = {
   high: "High",
   urgent: "Urgent",
 };
+
+/**
+ * The client's name with their title in front, where one was given.
+ * Used everywhere the host is displayed — list, calendar, agreement, ledger —
+ * so the title never has to be re-joined by hand.
+ */
+export function clientName(b: Pick<Booking, "title" | "client">): string {
+  return b.title ? `${b.title} ${b.client}` : b.client;
+}
+
+/**
+ * A booking is only Confirmed once an advance of at least
+ * CONFIRMATION_MINIMUM (Rs. 25,000) has actually been received. Anything less
+ * — including nothing at all — leaves it Tentative, whatever the form said.
+ * The same rule is enforced by the enforce_advance_status() trigger in the
+ * database, so it holds even outside the app.
+ */
+export function canConfirmBooking(advance: number): boolean {
+  return advance >= CONFIRMATION_MINIMUM;
+}
+
+export function statusForAdvance(
+  advance: number,
+  desired: BookingStatus
+): BookingStatus {
+  if (desired === "Cancelled") return "Cancelled";
+  return canConfirmBooking(advance) ? desired : "Tentative";
+}
 
 export function bookingRef(b: Pick<Booking, "booking_number" | "id">): string {
   return b.booking_number ? `SM-${String(b.booking_number).padStart(6, "0")}` : b.id.slice(0, 8).toUpperCase();
