@@ -9,7 +9,11 @@ export const HALL_CHARGE = 50000; // Rs. per hall, all venues
 
 export const COOLING_CHARGE_PER_HALL = 100000; // Rs. per hall
 export const HEATER_CHARGE = 8000; // Rs. per heater
-export const TOKEN_MINIMUM = 50000; // Rs. non-refundable token to confirm a booking
+export const TOKEN_MINIMUM = 50000; // Rs. non-refundable token quoted on the rate card
+
+// Minimum advance that actually converts a booking from Tentative to
+// Confirmed. Below this the booking stays Tentative however it is saved.
+export const CONFIRMATION_MINIMUM = 25000; // Rs.
 export const EXTRA_HOUR_CHARGE = 25000; // Rs. per additional hour beyond the 4-hour slot
 export const ENTRY_TEST_RATE = 600; // Rs. per head, flat — no menu/offered items involved
 
