@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, PartyPopper, Ban } from "lucide-react";
+import { Bell, PartyPopper, Ban, ShieldAlert, BadgeCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { clientName } from "@/types";
 import { fmtDMYTime } from "@/lib/dateFormat";
@@ -10,8 +10,10 @@ import type { Booking } from "@/types";
 
 type Notice = {
   id: string;
-  bookingId: string;
-  kind: "new" | "cancelled" | "rescheduled";
+  bookingId: string | null;
+  /** Where clicking the notice should take the reader. */
+  href?: string;
+  kind: "new" | "cancelled" | "rescheduled" | "approval" | "decision";
   text: string;
   at: string;
   read: boolean;
@@ -86,8 +88,57 @@ export default function NotificationBell() {
       )
       .subscribe();
 
+    // Discount approvals: an approver is told a request has arrived, and a
+    // requester is told how theirs was decided. RLS already limits these rows
+    // to the two people involved, so anything that arrives here is relevant.
+    const approvals = supabase
+      .channel("notifications-discount-approvals")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "discount_approvals" },
+        async (payload) => {
+          const r = payload.new as any;
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user || r.requested_by === user.id) return; // don't notify the requester of their own request
+          pushNotice({
+            id: `${r.id}-req-${Date.now()}`,
+            bookingId: null,
+            href: "/dashboard",
+            kind: "approval",
+            text: `Discount approval needed: Rs. ${Number(r.requested_amount).toLocaleString("en-PK")}${
+              r.client_name ? ` for ${r.client_name}` : ""
+            }`,
+            at: new Date().toISOString(),
+            read: false,
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "discount_approvals" },
+        async (payload) => {
+          const r = payload.new as any;
+          if (r.status !== "approved" && r.status !== "rejected") return;
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user || r.requested_by !== user.id) return; // only the requester hears the outcome
+          pushNotice({
+            id: `${r.id}-dec-${Date.now()}`,
+            bookingId: null,
+            href: "/dashboard",
+            kind: "decision",
+            text: `Your Rs. ${Number(r.requested_amount).toLocaleString("en-PK")} discount request was ${
+              r.status === "approved" ? "approved" : "declined"
+            }`,
+            at: new Date().toISOString(),
+            read: false,
+          });
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(approvals);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -135,7 +186,7 @@ export default function NotificationBell() {
           {notices.length === 0 ? (
             <div className="px-3.5 py-8 text-center text-muted text-[12.5px]">
               <Bell size={20} strokeWidth={1.5} className="mx-auto mb-2 opacity-40" />
-              Nothing yet — new bookings and cancellations will show up here live.
+              Nothing yet — bookings, cancellations and discount approvals show up here live.
             </div>
           ) : (
             notices.map((n) => (
@@ -143,16 +194,30 @@ export default function NotificationBell() {
                 key={n.id}
                 onClick={() => {
                   setOpen(false);
-                  router.push(`/bookings/${n.bookingId}`);
+                  router.push(n.href ?? `/bookings/${n.bookingId}`);
                 }}
                 className="w-full text-left px-3.5 py-2.5 border-b border-border last:border-0 hover:bg-bg flex gap-2.5 items-start"
               >
                 <span
                   className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                    n.kind === "cancelled" ? "bg-rose-light text-rose" : "bg-emerald-light text-emerald"
+                    n.kind === "cancelled"
+                      ? "bg-rose-light text-rose"
+                      : n.kind === "approval"
+                      ? "bg-gold-light text-gold-deep"
+                      : n.kind === "decision"
+                      ? "bg-primary-dim text-gold-deep"
+                      : "bg-emerald-light text-emerald"
                   }`}
                 >
-                  {n.kind === "cancelled" ? <Ban size={13} strokeWidth={2.2} /> : <PartyPopper size={13} strokeWidth={2.2} />}
+                  {n.kind === "cancelled" ? (
+                    <Ban size={13} strokeWidth={2.2} />
+                  ) : n.kind === "approval" ? (
+                    <ShieldAlert size={13} strokeWidth={2.3} />
+                  ) : n.kind === "decision" ? (
+                    <BadgeCheck size={13} strokeWidth={2.3} />
+                  ) : (
+                    <PartyPopper size={13} strokeWidth={2.2} />
+                  )}
                 </span>
                 <span className="flex-1 min-w-0">
                   <span className="block text-[12.5px] font-semibold text-primary leading-snug">{n.text}</span>

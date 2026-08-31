@@ -71,9 +71,10 @@ export default function HomePage() {
           </div>
           <Link
             href="/dashboard"
-            className="text-[12px] sm:text-[12.5px] font-semibold text-[#CFC6A6] hover:text-gold-light border border-[#3A342A] hover:border-gold/50 rounded-lg px-3.5 py-2 transition-colors"
+            className="inline-flex items-center gap-2 bg-gradient-to-br from-[#D3AF52] to-[#9C7A26] text-[#17140F] font-bold text-[13px] sm:text-[14px] rounded-xl px-5 sm:px-6 py-2.5 sm:py-3 shadow-gold hover:brightness-105 transition ring-1 ring-gold-light/30"
           >
-            Staff portal
+            Staff Portal
+            <span aria-hidden>&rarr;</span>
           </Link>
         </header>
 
@@ -106,6 +107,16 @@ export default function HomePage() {
                 {PHONE_MOBILE}
               </a>
             </div>
+
+            {/* Most visits to this page are the team, not clients — so give
+                them a second, obvious way in without hunting for the header. */}
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 mt-7 text-[13.5px] font-bold text-gold-light border-b-2 border-gold/50 hover:border-gold pb-0.5 transition-colors"
+            >
+              Staff sign in to the operations portal
+              <span aria-hidden>&rarr;</span>
+            </Link>
           </div>
         </div>
       </section>

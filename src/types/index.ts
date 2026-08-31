@@ -95,10 +95,59 @@ export function isReadOnlyRole(role: Role): boolean {
 export const DISCOUNT_LIMITS: Record<Role, number> = {
   owner: 0,                // monitor only
   staff: 0,
-  manager: 50000,          // currently Zain Syed
-  general_manager: 100000, // currently Ikram Abbasi
+  manager: 100000,         // currently Zain Syed
+  general_manager: 200000, // currently Ikram Abbasi
   admin: Infinity,
   developer: Infinity,
+};
+
+// ---------------------------------------------------------------------------
+// CHAIN OF COMMAND FOR DISCOUNT APPROVALS
+//     Admin (high)  ->  General Manager  ->  Manager (low)
+// A request goes to everyone above the requester, and the first of them to act
+// on it decides it. Mirrored by approver_roles_for() in the database.
+// ---------------------------------------------------------------------------
+export const DISCOUNT_APPROVERS: Record<Role, Role[]> = {
+  staff: ["manager", "general_manager", "admin"],
+  manager: ["general_manager", "admin"],
+  general_manager: ["admin"],
+  admin: [],     // no ceiling to clear
+  developer: [],
+  owner: [],     // monitor only
+};
+
+export function approversFor(role: Role): Role[] {
+  return DISCOUNT_APPROVERS[role] ?? [];
+}
+
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+/**
+ * A request to exceed your own discount ceiling on one booking. Once approved
+ * it acts as a single-use permit: the database spends it on the next booking
+ * saved with a discount up to the approved amount, then marks it consumed.
+ */
+export type DiscountApproval = {
+  id: string;
+  booking_id: string | null;
+  client_name: string | null;
+  event_date: string | null;
+  booking_total: number | null;
+  requested_amount: number;
+  requester_limit: number;
+  reason: string | null;
+  requested_by: string;
+  requester_role: Role;
+  approver_roles: Role[];
+  status: ApprovalStatus;
+  approved_amount: number | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  consumed_booking_id: string | null;
+  consumed_at: string | null;
+  created_at: string;
+  profiles?: { full_name: string } | null; // joined requester name
 };
 
 export function discountLimitFor(role: Role): number {

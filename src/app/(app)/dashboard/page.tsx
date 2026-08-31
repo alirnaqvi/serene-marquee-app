@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CalendarClock, Wallet, TrendingUp, TrendingDown, ArrowUpRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import DiscountApprovals from "@/components/DiscountApprovals";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import { clientName } from "@/types";
 import type { Venue, Menu } from "@/types";
@@ -119,6 +120,12 @@ export default async function DashboardPage() {
       <div className="mb-2">
         <div className="text-xl font-bold font-serif text-primary">Dashboard</div>
         <div className="text-xs text-muted mt-0.5">Overview across all three venues</div>
+      </div>
+
+      {/* Renders nothing unless there is a discount request to act on, or a
+          decision on one of this person's own requests. */}
+      <div className="mt-5">
+        <DiscountApprovals />
       </div>
 
       <div

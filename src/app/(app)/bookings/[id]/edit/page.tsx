@@ -10,7 +10,7 @@ import type { Venue, Menu, Booking, AddonItem, ClientTitle } from "@/types";
 import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
-import DiscountField, { discountError } from "@/components/DiscountField";
+import DiscountField from "@/components/DiscountField";
 import { useSession } from "@/components/SessionContext";
 
 const CUSTOM_MENU_VALUE = "__custom__";
@@ -241,11 +241,10 @@ export default function EditBookingPage() {
       return setError("You can't reschedule to a date that has already passed. Please choose today or a future date.");
     }
     if (selectedVenues.length === 0) return setError("Please select at least one venue.");
-    // Discount authority is capped per role (Manager Rs. 30,000 / General
-    // Manager Rs. 50,000). The database enforces the same rule, so this is
-    // only here to fail fast with a friendlier message.
-    const discErr = discountError(n(discount), discountLimit, role);
-    if (discErr) return setError(discErr);
+    // Discount authority is capped per role, and an approved request acts as a
+    // one-time permit above that cap. Whether a permit exists is only knowable
+    // in the database, so enforce_discount_limit() is the authority here — its
+    // error message is already written for the user and surfaces below.
     if (isCustomMenu && customSelection.length === 0) {
       return setError("Please pick at least one item for the Customized Menu, or choose a regular menu instead.");
     }
@@ -528,7 +527,14 @@ export default function EditBookingPage() {
               )}
             </div>
           )}
-          <DiscountField value={discount} onChange={setDiscount} />
+          <DiscountField
+            value={discount}
+            onChange={setDiscount}
+            clientNameValue={client}
+            eventDate={date}
+            bookingId={bookingId}
+            bookingTotal={totals.grandTotal}
+          />
           <div>
             <label className="text-xs font-bold text-muted uppercase">Filer Status</label>
             <select className="w-full mt-1" value={filer} onChange={(e) => setFiler(e.target.value as any)}>

@@ -170,11 +170,11 @@ export default function StaffAdminPage() {
         <ul className="text-[12.5px] text-muted list-disc pl-5 flex flex-col gap-1">
           <li>
             <b className="text-primary">Manager</b> — may approve up to{" "}
-            <b className="text-primary">Rs. 50,000</b> discount per booking.
+            <b className="text-primary">Rs. 100,000</b> discount per booking.
           </li>
           <li>
             <b className="text-primary">General Manager</b> — may approve up to{" "}
-            <b className="text-primary">Rs. 100,000</b> discount per booking.
+            <b className="text-primary">Rs. 200,000</b> discount per booking.
           </li>
           <li>
             <b className="text-primary">Owner / CEO</b> — monitor only. Can view every screen they have access
@@ -183,9 +183,16 @@ export default function StaffAdminPage() {
           <li>
             <b className="text-primary">Admin / Developer</b> — no discount ceiling.
           </li>
+          <li>
+            <b className="text-primary">Going above your limit</b> — send an approval request up the chain:
+            Admin → General Manager → Manager. A Manager's request reaches both the General Manager and the
+            Admin, and whoever acts on it first decides it. Approvals appear on the dashboard and in the
+            notification bell, and are good for one booking only.
+          </li>
         </ul>
         <div className="text-[11px] text-muted mt-2.5">
-          These limits are enforced in the database as well as the screens, so they hold even outside the app.
+          These limits are enforced in the database as well as the screens, so they hold even outside the app —
+          including the approval permit, which is spent on the single booking it was granted for.
         </div>
       </div>
 
