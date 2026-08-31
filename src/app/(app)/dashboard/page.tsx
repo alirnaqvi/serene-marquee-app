@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import DiscountApprovals from "@/components/DiscountApprovals";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import { clientName } from "@/types";
+import { SESSION_TIMES } from "@/lib/constants";
 import type { Venue, Menu } from "@/types";
 
 // This page must never be cached/statically generated — it shows live
@@ -163,10 +164,12 @@ export default async function DashboardPage() {
           </Link>
         </div>
         <div className="overflow-x-auto -mx-1">
-          <table className="w-full text-[13px] min-w-[560px]">
+          <table className="w-full text-[13px] min-w-[860px]">
             <thead>
               <tr className="text-left text-muted text-[11px] uppercase tracking-wide border-b border-border">
                 <th className="py-2 px-2">Date</th>
+                <th className="py-2 px-2">Venue</th>
+                <th className="py-2 px-2">Time</th>
                 <th className="py-2 px-2">Client</th>
                 <th className="py-2 px-2">Function</th>
                 <th className="py-2 px-2">Guests</th>
@@ -177,7 +180,7 @@ export default async function DashboardPage() {
             <tbody>
               {upcoming.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="text-center py-8 text-muted text-sm">
+                  <td colSpan={8} className="text-center py-8 text-muted text-sm">
                     No upcoming functions
                   </td>
                 </tr>
@@ -192,6 +195,15 @@ export default async function DashboardPage() {
                       </Link>
                       <br />
                       <span className="text-[11px] text-muted">{b.session}</span>
+                    </td>
+                    <td className="py-2.5 px-2">
+                      {(b.venues || [])
+                        .map((id: string) => (venues as Venue[])?.find((v) => v.id === id)?.name)
+                        .filter(Boolean)
+                        .join(" + ") || "—"}
+                    </td>
+                    <td className="py-2.5 px-2 text-[12px] whitespace-nowrap">
+                      {SESSION_TIMES[b.session as "Lunch" | "Dinner"] || b.session}
                     </td>
                     <td className="py-2.5 px-2">{clientName(b)}</td>
                     <td className="py-2.5 px-2">{functionLabel(b)}</td>

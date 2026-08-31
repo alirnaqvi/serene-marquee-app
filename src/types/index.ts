@@ -123,16 +123,31 @@ export function approversFor(role: Role): Role[] {
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 
 /**
- * A request to exceed your own discount ceiling on one booking. Once approved
- * it acts as a single-use permit: the database spends it on the next booking
- * saved with a discount up to the approved amount, then marks it consumed.
+ * A request to exceed your own discount ceiling on one specific booking,
+ * raised against that booking's order number.
+ *
+ * The approver can grant the full amount or less — approve Rs. 120,000 against
+ * a request for Rs. 150,000. Whatever they grant becomes `approved_amount`,
+ * and that is the ceiling the permit allows.
+ *
+ * Once approved it is a single-use permit tied to `booking_id`: the database
+ * spends it when that booking is saved, then marks it consumed.
  */
 export type DiscountApproval = {
   id: string;
   booking_id: string | null;
+  /** Order number the discount is being requested against, e.g. 123 -> SM-000123 */
+  booking_number: number | null;
   client_name: string | null;
   event_date: string | null;
   booking_total: number | null;
+  /** Snapshot of the booking at request time, so the approver sees what the requester saw. */
+  guests: number | null;
+  menu_label: string | null;
+  venue_label: string | null;
+  session: string | null;
+  function_label: string | null;
+  current_discount: number | null;
   requested_amount: number;
   requester_limit: number;
   reason: string | null;

@@ -30,6 +30,7 @@ export default function EditBookingPage() {
   const { role, discountLimit, readOnly } = useSession();
 
   const [loaded, setLoaded] = useState(false);
+  const [original, setOriginal] = useState<Booking | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
   const [addonItems, setAddonItems] = useState<AddonItem[]>([]);
@@ -93,6 +94,7 @@ export default function EditBookingPage() {
       setExistingBookings(b || []);
 
       if (booking) {
+        setOriginal(booking);
         setSelectedVenues(booking.venues);
         setSession(booking.session);
         setDate(booking.event_date);
@@ -530,10 +532,26 @@ export default function EditBookingPage() {
           <DiscountField
             value={discount}
             onChange={setDiscount}
-            clientNameValue={client}
-            eventDate={date}
-            bookingId={bookingId}
-            bookingTotal={totals.grandTotal}
+            context={{
+              bookingId,
+              bookingNumber: original?.booking_number ?? null,
+              clientName: client,
+              eventDate: date,
+              guests: n(guests),
+              menuLabel: isEntryTest
+                ? "Entry Test (flat per head)"
+                : isCustomMenu
+                ? "Customized Menu"
+                : selectedMenu?.name,
+              venueLabel: selectedVenues
+                .map((id) => venues.find((v) => v.id === id)?.name)
+                .filter(Boolean)
+                .join(" + "),
+              session,
+              functionLabel: functionType === "Other" ? functionTypeOther : functionType,
+              bookingTotal: totals.grandTotal,
+              currentDiscount: original?.discount ?? 0,
+            }}
           />
           <div>
             <label className="text-xs font-bold text-muted uppercase">Filer Status</label>

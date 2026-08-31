@@ -512,9 +512,7 @@ export default function NewBookingPage() {
           <DiscountField
             value={discount}
             onChange={setDiscount}
-            clientNameValue={client}
-            eventDate={date}
-            bookingTotal={totals.grandTotal}
+            context={{ clientName: client, eventDate: date, bookingTotal: totals.grandTotal }}
           />
           <div>
             <label className="text-xs font-bold text-muted uppercase">Filer Status</label>
