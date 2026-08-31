@@ -113,12 +113,28 @@ export default function DiscountField({
   };
   const mine = requests.filter(belongsHere);
 
-  const approved = mine.find((r) => r.status === "approved");
+  // Keep the largest approved permit, in case more than one exists.
+  const approved = mine
+    .filter((r) => r.status === "approved")
+    .sort(
+      (a, b) =>
+        (b.approved_amount ?? b.requested_amount) - (a.approved_amount ?? a.requested_amount)
+    )[0];
   const pending = mine.find((r) => r.status === "pending");
   const rejected = mine.find((r) => r.status === "rejected" && !pending && !approved);
+
   const permitCeiling = approved ? approved.approved_amount ?? approved.requested_amount : 0;
-  const coveredByPermit = Boolean(approved) && amount <= permitCeiling;
-  const canSave = !overLimit || coveredByPermit;
+
+  // The most this person can actually put on this booking right now: their own
+  // limit, raised by any approval they're holding.
+  const ceiling = unlimited ? Infinity : Math.max(discountLimit, permitCeiling);
+
+  // Everything below keys off the amount TYPED IN, not off what was once
+  // requested — asking for 150,000 and then typing 200,000 has to be treated
+  // as needing a fresh approval, not as a settled decision.
+  const needsApproval = amount > ceiling;
+  const usingPermit = !needsApproval && amount > discountLimit;
+  const pendingCoversTyped = Boolean(pending && pending.requested_amount >= amount);
 
   async function sendRequest() {
     const want = Number(askAmount) || amount;
@@ -135,6 +151,12 @@ export default function DiscountField({
     const {
       data: { user },
     } = await supabase.auth.getUser();
+
+    // Replace any request of ours still waiting on this booking, so an
+    // approver never sees two competing figures for the same discount.
+    const stale = mine.filter((r) => r.status === "pending").map((r) => r.id);
+    if (stale.length) await supabase.from("discount_approvals").delete().in("id", stale);
+
     const { error: err } = await supabase.from("discount_approvals").insert({
       booking_id: bookingId,
       booking_number: context?.bookingNumber ?? null,
@@ -179,20 +201,21 @@ export default function DiscountField({
       <input
         type="number"
         min={0}
-        className={`w-full mt-1 ${overLimit && !coveredByPermit ? "border-rose" : ""}`}
+        className={`w-full mt-1 ${needsApproval ? "border-rose" : ""}`}
         value={noAuthority && approvers.length === 0 ? "" : value}
         disabled={noAuthority && approvers.length === 0}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
       />
 
-      {!overLimit && (
+      {/* ---- within your own limit ---- */}
+      {!needsApproval && !usingPermit && (
         <div className="text-[11px] text-muted mt-1">
           Your limit: {unlimited ? "no limit" : `Rs. ${discountLimit.toLocaleString("en-PK")} per booking`}
         </div>
       )}
 
-      {/* ---- approved, and the typed amount is within what was granted ---- */}
-      {overLimit && coveredByPermit && (
+      {/* ---- above your limit, but covered by an approval you hold ---- */}
+      {usingPermit && (
         <div className="text-[11px] text-gold-deep font-semibold mt-1.5 bg-primary-dim rounded-md px-2.5 py-1.5">
           Approved up to Rs. {permitCeiling.toLocaleString("en-PK")}
           {ref && ` on ${ref}`} — you can save this booking.
@@ -200,56 +223,70 @@ export default function DiscountField({
         </div>
       )}
 
-      {/* ---- approved, but for LESS than what's typed in ---- */}
-      {overLimit && approved && !coveredByPermit && (
-        <div className="text-[11px] mt-1.5 bg-gold-light border border-gold/40 rounded-md px-2.5 py-1.5">
-          <div className="font-bold text-gold-deep">
-            Approved for Rs. {permitCeiling.toLocaleString("en-PK")}, not Rs.{" "}
-            {approved.requested_amount.toLocaleString("en-PK")}
-          </div>
-          {approved.decision_note && (
-            <div className="text-[#6B5320] mt-0.5">“{approved.decision_note}”</div>
-          )}
-          <button
-            onClick={() => onChange(permitCeiling)}
-            className="btn-primary rounded-md px-3 py-1 text-[11px] mt-1.5"
-          >
-            Set discount to Rs. {permitCeiling.toLocaleString("en-PK")}
-          </button>
-        </div>
-      )}
-
-      {/* ---- waiting ---- */}
-      {overLimit && !approved && pending && (
-        <div className="text-[11px] mt-1.5 bg-gold-light border border-gold/30 rounded-md px-2.5 py-1.5">
-          <div className="font-semibold text-gold-deep">
-            Waiting on approval for Rs. {pending.requested_amount.toLocaleString("en-PK")}
-            {ref && ` on ${ref}`}
-          </div>
-          <div className="text-muted mt-0.5">
-            Sent to {pending.approver_roles.map((r) => ROLE_LABELS[r]).join(" and ")}. They can approve the full
-            amount or a lower one.
-          </div>
-          <button onClick={() => withdraw(pending.id)} className="text-rose font-semibold hover:underline mt-1">
-            Withdraw request
-          </button>
-        </div>
-      )}
-
-      {/* ---- over limit, nothing in hand ---- */}
-      {overLimit && !approved && !pending && (
+      {/* ---- needs an approval for the amount currently typed ---- */}
+      {needsApproval && (
         <div className="mt-1.5">
           <div className="text-[11px] text-rose font-semibold">
-            Over your limit — {ROLE_LABELS[role]} may approve up to Rs.{" "}
-            {discountLimit.toLocaleString("en-PK")} per booking.
+            Rs. {amount.toLocaleString("en-PK")} is above what you can give
+            {permitCeiling > 0
+              ? ` (approved up to Rs. ${permitCeiling.toLocaleString("en-PK")})`
+              : ` — ${ROLE_LABELS[role]} may approve up to Rs. ${discountLimit.toLocaleString("en-PK")}`}
+            .
           </div>
 
+          {/* An approval already in hand, for less than what's typed. Offer to
+              drop to it, or to ask for the larger figure. */}
+          {permitCeiling > 0 && (
+            <div className="text-[11px] mt-1.5 bg-gold-light border border-gold/40 rounded-md px-2.5 py-1.5">
+              <div className="font-bold text-gold-deep">
+                You're approved for Rs. {permitCeiling.toLocaleString("en-PK")} on this booking.
+              </div>
+              {approved?.decision_note && (
+                <div className="text-[#6B5320] mt-0.5">“{approved.decision_note}”</div>
+              )}
+              <button
+                onClick={() => onChange(permitCeiling)}
+                className="btn-primary rounded-md px-3 py-1 text-[11px] mt-1.5"
+              >
+                Use Rs. {permitCeiling.toLocaleString("en-PK")} instead
+              </button>
+            </div>
+          )}
+
           {rejected && (
-            <div className="text-[11px] text-rose mt-1 bg-rose-light rounded-md px-2.5 py-1.5">
+            <div className="text-[11px] text-rose mt-1.5 bg-rose-light rounded-md px-2.5 py-1.5">
               <span className="font-semibold">
-                Last request for Rs. {rejected.requested_amount.toLocaleString("en-PK")} was declined.
+                A request for Rs. {rejected.requested_amount.toLocaleString("en-PK")} was declined.
               </span>
               {rejected.decision_note && <div className="mt-0.5">“{rejected.decision_note}”</div>}
+            </div>
+          )}
+
+          {/* A request already out that would cover this amount. */}
+          {pendingCoversTyped && pending && (
+            <div className="text-[11px] mt-1.5 bg-gold-light border border-gold/30 rounded-md px-2.5 py-1.5">
+              <div className="font-semibold text-gold-deep">
+                Waiting on approval for Rs. {pending.requested_amount.toLocaleString("en-PK")}
+                {ref && ` on ${ref}`}
+              </div>
+              <div className="text-muted mt-0.5">
+                Sent to {pending.approver_roles.map((r) => ROLE_LABELS[r]).join(" and ")}. They can approve
+                that or a lower figure.
+              </div>
+              <button
+                onClick={() => withdraw(pending.id)}
+                className="text-rose font-semibold hover:underline mt-1"
+              >
+                Withdraw request
+              </button>
+            </div>
+          )}
+
+          {/* A request is out, but for LESS than what's now typed. */}
+          {pending && !pendingCoversTyped && (
+            <div className="text-[11px] text-muted mt-1.5">
+              A request for Rs. {pending.requested_amount.toLocaleString("en-PK")} is already pending.
+              Requesting Rs. {amount.toLocaleString("en-PK")} will replace it.
             </div>
           )}
 
@@ -265,12 +302,14 @@ export default function DiscountField({
               }}
               className="btn-ghost rounded-lg px-3 py-1.5 text-[11.5px] mt-2"
             >
-              Request approval from {approvers.map((r) => ROLE_LABELS[r]).join(" or ")}
+              Request Rs. {amount.toLocaleString("en-PK")} from{" "}
+              {approvers.map((r) => ROLE_LABELS[r]).join(" or ")}
             </button>
           ) : (
             <div className="border border-border rounded-lg p-2.5 mt-2 bg-bg">
               <div className="text-[11px] font-semibold text-primary mb-1.5">
-                Request approval{ref ? ` on ${ref}` : ""}
+                Request approval for Rs. {(Number(askAmount) || 0).toLocaleString("en-PK")}
+                {ref ? ` on ${ref}` : ""}
               </div>
               {!ref && (
                 <div className="text-[10.5px] text-muted mb-1.5">
@@ -288,7 +327,8 @@ export default function DiscountField({
               />
               <div className="text-[10.5px] text-muted mt-1">
                 Rs. {Math.max(0, (Number(askAmount) || 0) - discountLimit).toLocaleString("en-PK")} above your
-                limit. The approver may grant this or a lower figure.
+                Rs. {discountLimit.toLocaleString("en-PK")} limit. The approver can grant this figure or a
+                lower one.
               </div>
               <input
                 className="w-full text-[12.5px] mt-2"
