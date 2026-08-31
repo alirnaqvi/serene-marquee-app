@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CalendarClock, Wallet, TrendingUp, TrendingDown, ArrowUpRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import DiscountApprovals from "@/components/DiscountApprovals";
+import { PrivateFigures, PrivacyToggle, Masked } from "@/components/PrivateFigures";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import { clientName } from "@/types";
 import type { Venue, Menu } from "@/types";
@@ -36,6 +37,7 @@ function StatCard({
   hint,
   icon: Icon,
   tone = "primary",
+  sensitive = false,
 }: {
   href: string;
   label: string;
@@ -43,6 +45,8 @@ function StatCard({
   hint: string;
   icon: any;
   tone?: "primary" | "gold" | "rose";
+  /** Money figures are masked until the reader chooses to show them. */
+  sensitive?: boolean;
 }) {
   const toneClasses = {
     primary: "text-primary bg-primary-dim",
@@ -57,7 +61,9 @@ function StatCard({
           <Icon size={15} strokeWidth={2.2} />
         </div>
       </div>
-      <div className="text-[26px] font-bold font-serif text-primary mt-2 leading-none">{value}</div>
+      <div className="text-[26px] font-bold font-serif text-primary mt-2 leading-none">
+        {sensitive ? <Masked>{value}</Masked> : value}
+      </div>
       <div className="text-[11.5px] text-muted mt-2 flex items-center gap-1 group">
         {hint}
         <ArrowUpRight size={11} className="opacity-60" />
@@ -116,10 +122,13 @@ export default async function DashboardPage() {
   const expense = (ledger || []).filter((l: any) => l.type === "expense").reduce((s: number, l: any) => s + l.amount, 0);
 
   return (
-    <div>
-      <div className="mb-2">
-        <div className="text-xl font-bold font-serif text-primary">Dashboard</div>
-        <div className="text-xs text-muted mt-0.5">Overview across all three venues</div>
+    <PrivateFigures>
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xl font-bold font-serif text-primary">Dashboard</div>
+          <div className="text-xs text-muted mt-0.5">Overview across all three venues</div>
+        </div>
+        {hasLedgerAccess && <PrivacyToggle className="mt-1 shrink-0" />}
       </div>
 
       {/* Renders nothing unless there is a discount request to act on, or a
@@ -148,9 +157,26 @@ export default async function DashboardPage() {
               hint="View bookings"
               icon={Wallet}
               tone="primary"
+              sensitive
             />
-            <StatCard href="/ledger" label="Income (Total)" value={money(income)} hint="View ledger" icon={TrendingUp} tone="gold" />
-            <StatCard href="/ledger" label="Expense (Total)" value={money(expense)} hint="View ledger" icon={TrendingDown} tone="rose" />
+            <StatCard
+              href="/ledger"
+              label="Income (Total)"
+              value={money(income)}
+              hint="View ledger"
+              icon={TrendingUp}
+              tone="gold"
+              sensitive
+            />
+            <StatCard
+              href="/ledger"
+              label="Expense (Total)"
+              value={money(expense)}
+              hint="View ledger"
+              icon={TrendingDown}
+              tone="rose"
+              sensitive
+            />
           </>
         )}
       </div>
@@ -212,6 +238,6 @@ export default async function DashboardPage() {
           </table>
         </div>
       </div>
-    </div>
+    </PrivateFigures>
   );
 }
