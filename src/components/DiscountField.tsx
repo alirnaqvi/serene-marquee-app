@@ -71,7 +71,6 @@ export default function DiscountField({
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!bookingId) return;
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -80,17 +79,17 @@ export default function DiscountField({
       .from("discount_approvals")
       .select("*")
       .eq("requested_by", user.id)
-      .eq("booking_id", bookingId)
       .is("consumed_booking_id", null)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(20);
     setRequests((data as DiscountApproval[]) || []);
-  }, [supabase, bookingId]);
+  }, [supabase]);
 
   useEffect(() => {
-    if (unlimited || !bookingId) return;
+    if (unlimited) return;
     load();
     const channel = supabase
-      .channel(`discount-approvals-${bookingId}`)
+      .channel(`discount-approvals-${bookingId ?? "new"}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "discount_approvals" }, () => load())
       .subscribe();
     return () => {
@@ -98,9 +97,25 @@ export default function DiscountField({
     };
   }, [unlimited, bookingId, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const approved = requests.find((r) => r.status === "approved");
-  const pending = requests.find((r) => r.status === "pending");
-  const rejected = requests.find((r) => r.status === "rejected" && !pending && !approved);
+  // A request belongs to this booking either by its id (saved bookings) or by
+  // client name + function date (a booking still being created). This mirrors
+  // enforce_discount_limit(), so the field never shows "approved" for a save
+  // the database would refuse.
+  const norm = (x: string) => x.replace(/\s+/g, " ").trim().toLowerCase();
+  const belongsHere = (r: DiscountApproval) => {
+    if (r.booking_id) return r.booking_id === bookingId;
+    if (r.client_name)
+      return (
+        norm(r.client_name) === norm(context?.clientName || "") &&
+        r.event_date === (context?.eventDate || null)
+      );
+    return r.event_date === (context?.eventDate || null);
+  };
+  const mine = requests.filter(belongsHere);
+
+  const approved = mine.find((r) => r.status === "approved");
+  const pending = mine.find((r) => r.status === "pending");
+  const rejected = mine.find((r) => r.status === "rejected" && !pending && !approved);
   const permitCeiling = approved ? approved.approved_amount ?? approved.requested_amount : 0;
   const coveredByPermit = Boolean(approved) && amount <= permitCeiling;
   const canSave = !overLimit || coveredByPermit;
@@ -109,6 +124,10 @@ export default function DiscountField({
     const want = Number(askAmount) || amount;
     if (want <= discountLimit) {
       setError(`Rs. ${want.toLocaleString("en-PK")} is within your own limit — no approval needed.`);
+      return;
+    }
+    if (!bookingId && !context?.eventDate) {
+      setError("Pick the function date first — the approval is tied to it.");
       return;
     }
     setSending(true);
@@ -238,14 +257,6 @@ export default function DiscountField({
             <div className="text-[11px] text-muted mt-1">
               {ROLE_LABELS[role]} accounts can't apply a discount or request one.
             </div>
-          ) : !bookingId ? (
-            // No order number exists yet on an unsaved booking, and the request
-            // has to be raised against one.
-            <div className="text-[11px] text-muted mt-1.5 bg-bg border border-dashed border-border rounded-md px-2.5 py-2">
-              Approval requests are raised against the booking's order number. Save this booking first with a
-              discount of Rs. {discountLimit.toLocaleString("en-PK")} or less, then open it and request the
-              rest — the request will carry its order number and details.
-            </div>
           ) : !showForm ? (
             <button
               onClick={() => {
@@ -259,8 +270,15 @@ export default function DiscountField({
           ) : (
             <div className="border border-border rounded-lg p-2.5 mt-2 bg-bg">
               <div className="text-[11px] font-semibold text-primary mb-1.5">
-                Request approval{ref && ` on ${ref}`}
+                Request approval{ref ? ` on ${ref}` : ""}
               </div>
+              {!ref && (
+                <div className="text-[10.5px] text-muted mb-1.5">
+                  This booking has no order number yet, so the approval will be tied to
+                  {context?.clientName ? <b> {context.clientName}</b> : " this client"} on{" "}
+                  <b>{context?.eventDate || "this date"}</b>. It applies to that booking only.
+                </div>
+              )}
               <label className="text-[10.5px] font-bold text-muted uppercase">Discount requested</label>
               <input
                 type="number"

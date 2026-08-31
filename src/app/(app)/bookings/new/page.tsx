@@ -512,7 +512,24 @@ export default function NewBookingPage() {
           <DiscountField
             value={discount}
             onChange={setDiscount}
-            context={{ clientName: client, eventDate: date, bookingTotal: totals.grandTotal }}
+            context={{
+              clientName: client,
+              eventDate: date,
+              guests: n(guests),
+              menuLabel: isEntryTest
+                ? "Entry Test (flat per head)"
+                : isCustomMenu
+                ? "Customized Menu"
+                : selectedMenu?.name,
+              venueLabel: selectedVenues
+                .map((id) => venues.find((v) => v.id === id)?.name)
+                .filter(Boolean)
+                .join(" + "),
+              session,
+              functionLabel: functionType === "Other" ? functionTypeOther : functionType,
+              bookingTotal: totals.grandTotal,
+              currentDiscount: 0,
+            }}
           />
           <div>
             <label className="text-xs font-bold text-muted uppercase">Filer Status</label>

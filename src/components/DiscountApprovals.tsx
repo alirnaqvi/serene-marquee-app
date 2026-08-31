@@ -245,7 +245,7 @@ export default function DiscountApprovals() {
                         }}
                         className="text-[11.5px] font-semibold text-gold-deep border border-gold/50 rounded-lg px-3 py-1.5 hover:bg-white/40"
                       >
-                        Approve a lower amount
+                        Approve less
                       </button>
                       <button
                         onClick={() => decide(req, "rejected")}
@@ -268,8 +268,12 @@ export default function DiscountApprovals() {
                 {/* Counter-offer: grant less than was asked for. */}
                 {openFor === req.id && !readOnly && (
                   <div className="mt-3 bg-white rounded-lg border border-gold/40 px-3 py-3">
-                    <div className="text-[11.5px] font-bold text-primary mb-2">
-                      Approve a different amount
+                    <div className="text-[11.5px] font-bold text-primary mb-0.5">
+                      Too much? Approve a smaller discount instead
+                    </div>
+                    <div className="text-[11px] text-muted mb-2">
+                      They asked for {money(req.requested_amount)}. Enter what you're willing to allow — they
+                      can apply that figure or less, and nothing above it.
                     </div>
                     <div className="flex gap-2 flex-wrap items-end">
                       <div>
@@ -298,10 +302,40 @@ export default function DiscountApprovals() {
                       <button
                         onClick={() => decide(req, "approved", Number(grantAmount) || 0)}
                         disabled={busyId === req.id}
-                        className="btn-primary rounded-lg px-4 py-2 text-[12px] disabled:opacity-40"
+                        className="btn-primary rounded-lg px-4 py-2 text-[12px] disabled:opacity-40 whitespace-nowrap"
                       >
-                        Approve this amount
+                        Approve {money(Number(grantAmount) || 0)}
                       </button>
+                    </div>
+
+                    {/* One-tap common counter-offers, capped by the approver's
+                        own ceiling so nothing unusable is offered. */}
+                    <div className="flex gap-1.5 flex-wrap mt-2">
+                      {[0.75, 0.5, 0.25]
+                        .map((f) => Math.round((req.requested_amount * f) / 5000) * 5000)
+                        .filter(
+                          (v, i, arr) =>
+                            v > 0 &&
+                            arr.indexOf(v) === i &&
+                            (myCeiling === Infinity || v <= myCeiling)
+                        )
+                        .map((v) => (
+                          <button
+                            key={v}
+                            onClick={() => setGrantAmount(v)}
+                            className="text-[11px] font-semibold text-gold-deep border border-gold/40 rounded-md px-2.5 py-1 hover:bg-gold-light"
+                          >
+                            {money(v)}
+                          </button>
+                        ))}
+                      {myCeiling !== Infinity && req.requested_amount > myCeiling && (
+                        <button
+                          onClick={() => setGrantAmount(myCeiling)}
+                          className="text-[11px] font-semibold text-gold-deep border border-gold/40 rounded-md px-2.5 py-1 hover:bg-gold-light"
+                        >
+                          {money(myCeiling)} (your max)
+                        </button>
+                      )}
                     </div>
                     <div className="text-[10.5px] text-muted mt-2">
                       Must be between Rs. 1 and the {money(req.requested_amount)} requested
