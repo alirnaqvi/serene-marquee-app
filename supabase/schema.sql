@@ -190,12 +190,10 @@ create table if not exists public.bookings (
   guests int not null default 0,
   menu_id text references public.menus(id),   -- null when is_custom_menu = true or function_type = 'Entry Test'
   is_custom_menu boolean not null default false,
-  custom_menu_total numeric not null default 0,  -- fully custom menu total, replaces the regular rate
-  addons_total numeric not null default 0,       -- extra items added on top of a regular menu's rate
+  per_head_rate numeric not null default 0,   -- final agreed per-head rate (covers menu + any extra items), entered manually; 0 for Entry Test bookings
   removed_menu_items text[] not null default '{}', -- items unchecked from the selected offered menu's included list
   discount numeric not null default 0,        -- flat Rs. amount (not a percentage)
   reference text,
-  filer text not null default 'Filer' check (filer in ('Filer','Non-Filer')),
   decoration numeric not null default 0,
   cooling boolean not null default false,
   heaters int not null default 0,
@@ -607,4 +605,41 @@ alter table public.system_issues add constraint system_issues_created_by_fkey
 -- ============================================================================
 alter table public.bookings add column if not exists entry_test_type text;
 alter table public.bookings add column if not exists removed_menu_items text[] not null default '{}';
+-- ============================================================================
+
+-- ============================================================================
+-- MIGRATION: remove income tax (Filer/Non-Filer) entirely and switch from
+-- priced menus/add-ons to a single manually-entered final per-head rate per
+-- booking. Run this once against an existing (already-deployed) database.
+--
+-- This backfills per_head_rate from each existing booking's prior
+-- custom_menu_total / addons_total / menu rate BEFORE dropping the old
+-- columns, so historical bookings keep an equivalent per-head figure instead
+-- of silently resetting to 0. Menu and add-on item prices are left in place
+-- in the menus / addon_items tables (harmless, just unused by the app) so
+-- this backfill can run; the app itself no longer displays or reads them.
+-- ============================================================================
+alter table public.bookings add column if not exists per_head_rate numeric not null default 0;
+
+-- Custom-menu bookings: the old custom_menu_total was already a full total
+-- for all guests (each item's quantity was the guest count), so divide back
+-- down to a per-head figure.
+update public.bookings
+set per_head_rate = round(coalesce(custom_menu_total, 0) / guests)
+where is_custom_menu = true and guests > 0;
+
+-- Regular-menu bookings: reconstruct the old combined per-head rate from the
+-- menu's rate plus any extra items added on top.
+update public.bookings b
+set per_head_rate = round((coalesce(m.rate, 0) * b.guests + coalesce(b.addons_total, 0)) / b.guests)
+from public.menus m
+where m.id = b.menu_id and b.is_custom_menu = false and b.guests > 0;
+
+-- Entry Test bookings (and any booking with 0 guests) are left at the
+-- per_head_rate default of 0 — Entry Test pricing uses the separate flat
+-- ENTRY_TEST_RATE constant in the app, not this field.
+
+alter table public.bookings drop column if exists custom_menu_total;
+alter table public.bookings drop column if exists addons_total;
+alter table public.bookings drop column if exists filer;
 -- ============================================================================
