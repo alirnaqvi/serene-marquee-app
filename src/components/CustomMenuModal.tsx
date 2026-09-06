@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { money } from "@/lib/calculations";
 import type { AddonItem } from "@/types";
 
 export type CustomSelection = {
   addon_item_id: string;
   name: string;
-  unit_price: number;
   quantity: number;
 };
 
@@ -28,7 +26,7 @@ export default function CustomMenuModal({
   guests,
   initialSelection,
   title = "Customized Menu",
-  subtitle = "Pick items from the full 2026 menu — every item is charged per head, so quantities follow the guaranteed guest count.",
+  subtitle = "Pick items from the full 2026 menu.",
   confirmLabel = "Add to Booking",
   onClose,
   onConfirm,
@@ -89,17 +87,14 @@ export default function CustomMenuModal({
     });
   }, [guests, items]);
 
-  const selectedTotal = Object.entries(quantities).reduce((sum, [id, qty]) => {
-    const item = items.find((i) => i.id === id);
-    return sum + (item ? item.price * qty : 0);
-  }, 0);
+  const selectedCount = Object.values(quantities).filter((qty) => qty > 0).length;
 
   function handleConfirm() {
     const selection: CustomSelection[] = Object.entries(quantities)
       .filter(([, qty]) => qty > 0)
       .map(([id, qty]) => {
         const item = items.find((i) => i.id === id)!;
-        return { addon_item_id: item.id, name: item.name, unit_price: item.price, quantity: qty };
+        return { addon_item_id: item.id, name: item.name, quantity: qty };
       });
     onConfirm(selection);
   }
@@ -138,16 +133,10 @@ export default function CustomMenuModal({
                           onChange={(e) => toggle(item, e.target.checked)}
                         />
                         <span>{item.name}</span>
-                        <span className="text-muted text-xs">
-                          ({money(item.price)} / head)
-                        </span>
                       </label>
                       {checked && (
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="w-24 text-xs text-muted text-right">× {guests || 0} guests</span>
-                          <span className="text-xs text-muted w-24 text-right">
-                            {money(item.price * (quantities[item.id] || 0))}
-                          </span>
                         </div>
                       )}
                     </div>
@@ -160,9 +149,9 @@ export default function CustomMenuModal({
 
         <div className="px-6 py-4 border-t border-border flex items-center justify-between">
           <div className="text-sm">
-            <span className="text-muted">Selected total: </span>
-            <span className="font-bold text-primary text-base">{money(selectedTotal)}</span>
-            <span className="text-muted text-xs"> (before discount, KPRA tax, and other charges)</span>
+            <span className="text-muted">Selected: </span>
+            <span className="font-bold text-primary text-base">{selectedCount}</span>
+            <span className="text-muted text-xs"> item{selectedCount === 1 ? "" : "s"}</span>
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="btn-ghost rounded-lg px-4 py-2 text-sm">

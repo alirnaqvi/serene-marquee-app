@@ -12,7 +12,6 @@ export type Venue = {
 export type Menu = {
   id: string;
   name: string;
-  rate: number;
   items: string;
 };
 
@@ -178,7 +177,6 @@ export function discountLimitLabel(role: Role): string {
 
 export type BookingStatus = "Tentative" | "Confirmed" | "Cancelled";
 export type Session = "Lunch" | "Dinner";
-export type FilerStatus = "Filer" | "Non-Filer";
 
 export type ClientTitle = "Mr." | "Mrs." | "Ms.";
 
@@ -202,12 +200,10 @@ export type Booking = {
   guests: number;
   menu_id: string | null;
   is_custom_menu: boolean;
-  custom_menu_total: number;
-  addons_total: number; // extra items added on top of a regular menu's per-head rate
+  per_head_rate: number; // final per-head rate entered manually, covers menu + any extra items
   removed_menu_items: string[] | null; // items unchecked from the selected offered menu's included list
   discount: number; // flat Rs. amount (not a percentage)
   reference: string | null;
-  filer: FilerStatus;
   decoration: number;
   cooling: boolean;
   heaters: number;

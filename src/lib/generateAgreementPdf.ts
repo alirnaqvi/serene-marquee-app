@@ -141,7 +141,6 @@ export function generateDocumentPdf(
     [isEntryTest ? "Rate" : "Menu", menuLine]
   );
   if (booking.reference) details.push(["Discount Reference", booking.reference]);
-  details.push(["Filer Status", booking.filer]);
   if (docType !== "Quotation") details.push(["Status", booking.status]);
   if (docType === "Agreement") details.push(["Booking Recorded On", fmtDMYTime(new Date(booking.created_at))]);
 
@@ -174,9 +173,9 @@ export function generateDocumentPdf(
       margin: { left: margin, right: margin },
       headStyles: { fillColor: DARK, textColor: CREAM, fontStyle: "bold", fontSize: 9 },
       styles: { fontSize: 9, cellPadding: 4.5, textColor: INK, lineColor: [231, 224, 201], lineWidth: 0.5 },
-      head: [["Item", "Unit Price", "Qty", "Line Total"]],
-      body: addons.map((a) => [a.name, money(a.unit_price), String(a.quantity), money(a.line_total)]),
-      columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } },
+      head: [["Item", "Qty"]],
+      body: addons.map((a) => [a.name, String(a.quantity)]),
+      columnStyles: { 1: { halign: "right" } },
     });
     // @ts-ignore
     y = doc.lastAutoTable.finalY + 18;
@@ -207,9 +206,7 @@ export function generateDocumentPdf(
     ? `Entry Test Fee (${booking.guests} x ${money(ENTRY_TEST_RATE)})`
     : booking.is_custom_menu
     ? "Customized Menu Total"
-    : t.addonsTotal > 0
-    ? `Food Subtotal (${booking.guests} x ${money((menu?.rate || 0))}, incl. extra items)`
-    : `Food Subtotal (${booking.guests} x ${money(menu?.rate || 0)})`;
+    : `Food Subtotal (${booking.guests} x ${money(booking.per_head_rate)}/head)`;
 
   const charges: [string, string, string][] = [
     [foodLabel, "", money(t.foodSubtotal)],
@@ -218,7 +215,6 @@ export function generateDocumentPdf(
     ["Decoration", "", "+ " + money(t.decoration)],
     ["Cooling", booking.cooling ? "Yes" : "No", "+ " + money(t.coolingCharge)],
     ["Heating", `${booking.heaters} heater(s)`, "+ " + money(t.heatingCharge)],
-    ["Income Tax", `${booking.filer}, ${t.incomeTaxRate * 100}%`, "+ " + money(t.incomeTax)],
     ["Total (before discount)", "", money(t.totalBeforeDiscount)],
     ["Discount", "", "- " + money(t.discountAmount)],
   ];

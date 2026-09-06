@@ -17,10 +17,6 @@ export const CONFIRMATION_MINIMUM = 25000; // Rs.
 export const EXTRA_HOUR_CHARGE = 25000; // Rs. per additional hour beyond the 4-hour slot
 export const ENTRY_TEST_RATE = 600; // Rs. per head, flat — no menu/offered items involved
 
-export function incomeTaxRate(filer: "Filer" | "Non-Filer"): number {
-  return filer === "Filer" ? 0.1 : 0.2;
-}
-
 export const SESSION_TIMES: Record<"Lunch" | "Dinner", string> = {
   Lunch: "12:30 PM to 4:30 PM",
   Dinner: "7:00 PM to 11:00 PM",
