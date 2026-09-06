@@ -243,7 +243,6 @@ export default function BookingDetailPage() {
             <Row k="Removed From Menu" v={(booking.removed_menu_items || []).join(", ")} />
           )}
           {booking.reference && <Row k="Discount Reference" v={booking.reference} />}
-          <Row k="Filer Status" v={booking.filer} />
           <Row k="Status" v={booking.status} />
           <Row k="Booking Recorded On" v={fmtDMYTime(new Date(booking.created_at))} />
         </div>
@@ -253,13 +252,12 @@ export default function BookingDetailPage() {
             <div className="text-xs font-bold text-muted uppercase mb-2">
               {booking.is_custom_menu ? "Customized Menu Items" : "Extra Items Added to Menu"}
             </div>
-            <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[560px] text-[12.5px]">
+            <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[400px] text-[12.5px]">
               <tbody>
                 {addons.map((a) => (
                   <tr key={a.id} className="border-b border-border last:border-0">
                     <td className="py-1.5">{a.name}</td>
-                    <td className="py-1.5 text-muted text-right">{money(a.unit_price)} × {a.quantity}</td>
-                    <td className="py-1.5 text-right font-semibold w-24">{money(a.line_total)}</td>
+                    <td className="py-1.5 text-muted text-right">× {a.quantity}</td>
                   </tr>
                 ))}
               </tbody>
@@ -274,7 +272,7 @@ export default function BookingDetailPage() {
               ? `Entry Test Fee (${booking.guests} × ${money(ENTRY_TEST_RATE)})`
               : booking.is_custom_menu
               ? "Customized Menu Total"
-              : `Food Subtotal (${booking.guests} × ${money(menu?.rate || 0)}${t.addonsTotal > 0 ? ", incl. extras" : ""})`}
+              : `Food Subtotal (${booking.guests} × ${money(booking.per_head_rate)}/head)`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(t.foodSubtotal)}</div>
           <div className="text-gold-deep opacity-85">KPRA Tax (15%)</div>
@@ -289,8 +287,6 @@ export default function BookingDetailPage() {
           <div className="text-right font-bold text-gold-deep">+ {money(t.coolingCharge)}</div>
           <div className="text-gold-deep opacity-85">Heating ({booking.heaters} heater{booking.heaters === 1 ? "" : "s"})</div>
           <div className="text-right font-bold text-gold-deep">+ {money(t.heatingCharge)}</div>
-          <div className="text-gold-deep opacity-85">Income Tax ({booking.filer}, {t.incomeTaxRate * 100}%)</div>
-          <div className="text-right font-bold text-gold-deep">+ {money(t.incomeTax)}</div>
           <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-1.5 mt-0.5 flex justify-between text-[13px] font-bold text-gold-deep">
             <span>Total (before discount)</span>
             <span>{money(t.totalBeforeDiscount)}</span>

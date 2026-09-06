@@ -95,7 +95,7 @@ export default async function DashboardPage() {
     supabase
       .from("bookings")
       .select(
-        "id, booking_number, venues, client, event_date, session, guests, status, function_type, function_type_other, is_custom_menu, custom_menu_total, addons_total, menu_id, discount, decoration, cooling, heaters, advance, filer"
+        "id, booking_number, venues, client, event_date, session, guests, status, function_type, function_type_other, is_custom_menu, per_head_rate, menu_id, discount, decoration, cooling, heaters, advance"
       )
       .order("event_date", { ascending: true }),
   ]);

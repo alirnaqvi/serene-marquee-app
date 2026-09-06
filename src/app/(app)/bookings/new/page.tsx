@@ -61,7 +61,7 @@ export default function NewBookingPage() {
   const [removedMenuItems, setRemovedMenuItems] = useState<string[]>([]);
   const [discount, setDiscount] = useState<NumField>("");
   const [reference, setReference] = useState("");
-  const [filer, setFiler] = useState<"Filer" | "Non-Filer">("Filer");
+  const [perHeadRate, setPerHeadRate] = useState<NumField>("");
   const [decoration, setDecoration] = useState<NumField>("");
   const [heaters, setHeaters] = useState<NumField>("");
   const [cooling, setCooling] = useState(false);
@@ -77,8 +77,6 @@ export default function NewBookingPage() {
 
   const isEntryTest = functionType === "Entry Test";
   const isCustomMenu = !isEntryTest && menuId === CUSTOM_MENU_VALUE;
-  const customMenuTotal = customSelection.reduce((s, c) => s + c.unit_price * c.quantity, 0);
-  const addOnsTotal = addOnSelection.reduce((s, c) => s + c.unit_price * c.quantity, 0);
   const selectedMenu = menus.find((m) => m.id === menuId);
 
   useEffect(() => {
@@ -165,13 +163,9 @@ export default function NewBookingPage() {
     {
       guests: n(guests),
       venues: selectedVenues,
-      menuId: isCustomMenu ? null : menuId,
-      isCustomMenu,
       isEntryTest,
-      customMenuTotal,
-      addonsTotal: isCustomMenu || isEntryTest ? 0 : addOnsTotal,
+      perHeadRate: n(perHeadRate),
       discount: n(discount),
-      filer,
       decoration: n(decoration),
       heaters: n(heaters),
       cooling,
@@ -195,6 +189,9 @@ export default function NewBookingPage() {
     // error message is already written for the user and surfaces below.
     if (isCustomMenu && customSelection.length === 0) {
       return setError("Please pick at least one item for the Customized Menu, or choose a regular menu instead.");
+    }
+    if (!isEntryTest && n(perHeadRate) <= 0) {
+      return setError("Please enter the final per-head rate for this booking.");
     }
     if (isEntryTest && !entryTestType.trim()) {
       return setError("Please enter the type of entry test (e.g. MDCAT, ECAT).");
@@ -227,12 +224,10 @@ export default function NewBookingPage() {
         guests: n(guests),
         menu_id: isEntryTest || isCustomMenu ? null : menuId,
         is_custom_menu: isCustomMenu,
-        custom_menu_total: isCustomMenu ? customMenuTotal : 0,
-        addons_total: isCustomMenu || isEntryTest ? 0 : addOnsTotal,
+        per_head_rate: isEntryTest ? 0 : n(perHeadRate),
         removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
         discount: n(discount),
         reference,
-        filer,
         decoration: n(decoration),
         heaters: n(heaters),
         cooling,
@@ -257,9 +252,9 @@ export default function NewBookingPage() {
           booking_id: inserted.id,
           addon_item_id: c.addon_item_id,
           name: c.name,
-          unit_price: c.unit_price,
+          unit_price: 0,
           quantity: c.quantity,
-          line_total: c.unit_price * c.quantity,
+          line_total: 0,
         }))
       );
     }
@@ -449,7 +444,7 @@ export default function NewBookingPage() {
               <select className="w-full mt-1" value={menuId} onChange={(e) => handleMenuChange(e.target.value)}>
                 {menus.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name} — {money(m.rate)}/head
+                    {m.name}
                   </option>
                 ))}
                 <option value={CUSTOM_MENU_VALUE}>Customized Menu… (build entirely from add-ons)</option>
@@ -487,7 +482,7 @@ export default function NewBookingPage() {
               {isCustomMenu && (
                 <div className="mt-1.5 flex items-center justify-between text-[12px] bg-gold-light border border-gold rounded-md px-2.5 py-1.5">
                   <span className="text-gold-deep font-semibold">
-                    {customSelection.length} item{customSelection.length === 1 ? "" : "s"} selected — {money(customMenuTotal)}
+                    {customSelection.length} item{customSelection.length === 1 ? "" : "s"} selected
                   </span>
                   <button type="button" onClick={() => setShowCustomMenuModal(true)} className="text-gold-deep font-bold underline">
                     Edit
@@ -502,11 +497,26 @@ export default function NewBookingPage() {
                     className="text-[12px] font-bold text-gold-deep underline"
                   >
                     {addOnSelection.length > 0
-                      ? `${addOnSelection.length} extra item${addOnSelection.length === 1 ? "" : "s"} added — ${money(addOnsTotal)}/head extra — Edit`
+                      ? `${addOnSelection.length} extra item${addOnSelection.length === 1 ? "" : "s"} added — Edit`
                       : "+ Customize this menu (add extra items)"}
                   </button>
                 </div>
               )}
+            </div>
+          )}
+          {!isEntryTest && (
+            <div>
+              <label className="text-xs font-bold text-muted uppercase">Final Per-Head Rate (Rs.)</label>
+              <input
+                type="number"
+                className="w-full mt-1"
+                value={perHeadRate}
+                onChange={(e) => setPerHeadRate(e.target.value === "" ? "" : Number(e.target.value))}
+                placeholder="e.g. 3500"
+              />
+              <div className="text-[11px] text-muted mt-1">
+                Enter the final agreed per-head rate covering the menu and any extra items. KPRA tax is applied on top of this.
+              </div>
             </div>
           )}
           <DiscountField
@@ -531,13 +541,6 @@ export default function NewBookingPage() {
               currentDiscount: 0,
             }}
           />
-          <div>
-            <label className="text-xs font-bold text-muted uppercase">Filer Status</label>
-            <select className="w-full mt-1" value={filer} onChange={(e) => setFiler(e.target.value as any)}>
-              <option>Filer</option>
-              <option>Non-Filer</option>
-            </select>
-          </div>
           <div className="sm:col-span-2">
             <label className="text-xs font-bold text-muted uppercase">Discount Reference / Given By</label>
             <input className="w-full mt-1" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="e.g. Referred by M. Javed" />
@@ -613,7 +616,7 @@ export default function NewBookingPage() {
           <div className="text-gold-deep opacity-85">
             {isEntryTest
               ? `Entry Test Fee (${n(guests)} × ${money(ENTRY_TEST_RATE)})`
-              : `Food Subtotal${isCustomMenu ? " (Customized Menu)" : addOnsTotal > 0 ? " (incl. extra items)" : ""}`}
+              : `Food Subtotal (${n(guests)} × ${money(n(perHeadRate))}/head)`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(totals.foodSubtotal)}</div>
           <div className="text-gold-deep opacity-85">KPRA Tax (15%)</div>
@@ -624,8 +627,6 @@ export default function NewBookingPage() {
           <div className="text-right font-bold text-gold-deep">+ {money(totals.decoration)}</div>
           <div className="text-gold-deep opacity-85">Cooling / Heating</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.coolingCharge + totals.heatingCharge)}</div>
-          <div className="text-gold-deep opacity-85">Income Tax ({filer}, {totals.incomeTaxRate * 100}%)</div>
-          <div className="text-right font-bold text-gold-deep">+ {money(totals.incomeTax)}</div>
           <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-1.5 mt-0.5 flex justify-between text-[13px] font-bold text-gold-deep">
             <span>Total (before discount)</span>
             <span>{money(totals.totalBeforeDiscount)}</span>
@@ -658,7 +659,7 @@ export default function NewBookingPage() {
           guests={n(guests)}
           initialSelection={customSelection}
           title="Customized Menu"
-          subtitle="Build this booking's entire menu from individual items — this replaces the fixed per-head rate."
+          subtitle="Build this booking's entire menu from individual items."
           confirmLabel="Use as Menu"
           onClose={() => {
             setShowCustomMenuModal(false);
@@ -677,7 +678,7 @@ export default function NewBookingPage() {
           guests={n(guests)}
           initialSelection={addOnSelection}
           title="Customize This Menu"
-          subtitle="Selected items are added to the per-head rate of the menu already chosen above (Lamb Roast and Stalls are added as flat charges instead, since they're priced per unit, not per head)."
+          subtitle="Selected items are added on top of the menu already chosen above."
           confirmLabel="Add Extra Items"
           onClose={() => setShowAddOnsModal(false)}
           onConfirm={(selection) => {
