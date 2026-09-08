@@ -30,6 +30,19 @@ function Detail({ label, value }: { label: string; value: string | null | undefi
   );
 }
 
+/**
+ * Where "Open booking" should go. A request raised while editing a saved
+ * booking points straight at that booking's edit form. One raised while the
+ * booking was still being created has no id yet, so it reopens the new-booking
+ * form with the date and venue it was tied to.
+ */
+function bookingHref(req: DiscountApproval): string {
+  if (req.booking_id) return `/bookings/${req.booking_id}/edit`;
+  const params = new URLSearchParams();
+  if (req.event_date) params.set("date", req.event_date);
+  return `/bookings/new${params.toString() ? `?${params.toString()}` : ""}`;
+}
+
 export default function DiscountApprovals() {
   const supabase = createClient();
   const { readOnly, role } = useSession();
@@ -64,7 +77,11 @@ export default function DiscountApprovals() {
     setIncoming(rows.filter((r) => r.status === "pending" && r.requested_by !== user.id));
     setMine(
       rows.filter(
-        (r) => r.requested_by === user.id && r.status !== "pending" && !r.consumed_booking_id
+        (r) =>
+          r.requested_by === user.id &&
+          r.status !== "pending" &&
+          !r.consumed_booking_id &&
+          !r.dismissed_at
       )
     );
 
@@ -138,8 +155,17 @@ export default function DiscountApprovals() {
     load();
   }
 
+  /**
+   * Clear the notice off the dashboard without losing the record — the
+   * request stays in the discount history with its decision intact. (It used
+   * to be deleted, which both destroyed the history and silently failed,
+   * since only pending requests may be deleted.)
+   */
   async function dismissMine(id: string) {
-    await supabase.from("discount_approvals").delete().eq("id", id);
+    await supabase
+      .from("discount_approvals")
+      .update({ dismissed_at: new Date().toISOString() })
+      .eq("id", id);
     load();
   }
 
@@ -401,12 +427,24 @@ export default function DiscountApprovals() {
                 )}
               </div>
             </div>
-            <button
-              onClick={() => dismissMine(req.id)}
-              className="text-[11px] font-semibold text-muted hover:text-primary shrink-0"
-            >
-              Dismiss
-            </button>
+            {/* Straight to the booking the approval was granted against, so
+                the discount can be applied without hunting for it. */}
+            <div className="flex items-center gap-3 shrink-0">
+              {approved && (
+                <Link
+                  href={bookingHref(req)}
+                  className="text-[11px] font-bold text-[#17140F] bg-white border border-gold rounded-lg px-3 py-1.5 hover:brightness-95 whitespace-nowrap"
+                >
+                  Open booking
+                </Link>
+              )}
+              <button
+                onClick={() => dismissMine(req.id)}
+                className="text-[11px] font-semibold text-muted hover:text-primary"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         );
       })}

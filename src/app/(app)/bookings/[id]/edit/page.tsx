@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
-import { CONFIRMATION_MINIMUM, ENTRY_TEST_RATE } from "@/lib/constants";
+import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { FUNCTION_TYPES, CLIENT_TITLES, clientName, canConfirmBooking, statusForAdvance } from "@/types";
 import type { Venue, Menu, Booking, AddonItem, ClientTitle } from "@/types";
 import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
@@ -39,6 +39,8 @@ export default function EditBookingPage() {
   const [error, setError] = useState<string | null>(null);
   const [conflictAlert, setConflictAlert] = useState<string | null>(null);
   const [originalDate, setOriginalDate] = useState("");
+  const [settings, setSettings] = useState<ChargeSettings>(DEFAULT_SETTINGS);
+  const [draftSaving, setDraftSaving] = useState(false);
 
   const [selectedVenues, setSelectedVenues] = useState<string[]>([]);
   const [session, setSession] = useState<"Lunch" | "Dinner">("Lunch");
@@ -67,6 +69,7 @@ export default function EditBookingPage() {
   const [cooling, setCooling] = useState(false);
   const [advance, setAdvance] = useState<NumField>("");
   const [status, setStatus] = useState<"Tentative" | "Confirmed" | "Cancelled">("Confirmed");
+  // Set while the booking loads; a Draft is an unfinished form being resumed.
   // Remembers what the advance was when the booking was loaded, so entering
   // one for the first time can promote a Tentative booking to Confirmed.
   const [loadedAdvance, setLoadedAdvance] = useState(0);
@@ -82,7 +85,8 @@ export default function EditBookingPage() {
         supabase.from("venues").select("*"),
         supabase.from("menus").select("*"),
         supabase.from("addon_items").select("*"),
-        supabase.from("bookings").select("*").neq("status", "Cancelled").neq("id", bookingId),
+        // A draft reserves nothing, so it can never be the cause of a clash.
+        supabase.from("bookings").select("*").not("status", "in", '("Cancelled","Draft")').neq("id", bookingId),
         supabase.from("bookings").select("*").eq("id", bookingId).single(),
         supabase.from("booking_addons").select("*").eq("booking_id", bookingId),
       ]);
@@ -90,6 +94,7 @@ export default function EditBookingPage() {
       setMenus(m || []);
       setAddonItems(a || []);
       setExistingBookings(b || []);
+      setSettings(await fetchSettings(supabase));
 
       if (booking) {
         setOriginal(booking);
@@ -117,7 +122,10 @@ export default function EditBookingPage() {
         setCooling(booking.cooling);
         setAdvance(booking.advance || "");
         setLoadedAdvance(booking.advance);
-        setStatus(booking.status);
+        // A draft is being resumed, not edited: it needs to land on a real
+        // status when it is saved, so the dropdown starts from Confirmed and
+        // the advance rule decides from there.
+        setStatus(booking.status === "Draft" ? "Confirmed" : booking.status);
         setNotes(booking.notes || "");
 
         const selection: CustomSelection[] = (bAddons || []).map((ba) => ({
@@ -207,8 +215,11 @@ export default function EditBookingPage() {
       advance: n(advance),
     },
     venues,
-    menus
+    menus,
+    settings
   );
+
+  const isDraft = original?.status === "Draft";
 
   // Confirmed requires at least Rs. 25,000 in hand. Bringing the advance up to
   // that threshold promotes a Tentative booking to Confirmed; dropping back
@@ -216,13 +227,60 @@ export default function EditBookingPage() {
   // never overridden here.
   useEffect(() => {
     if (status === "Cancelled") return;
-    if (canConfirmBooking(n(advance)) && !canConfirmBooking(loadedAdvance) && status === "Tentative") {
+    if (
+      canConfirmBooking(n(advance), settings.confirmationMinimum) &&
+      !canConfirmBooking(loadedAdvance, settings.confirmationMinimum) &&
+      status === "Tentative"
+    ) {
       setStatus("Confirmed");
     }
   }, [advance, loadedAdvance]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const advancePaid = canConfirmBooking(n(advance));
-  const effectiveStatus = statusForAdvance(n(advance), status);
+  const advancePaid = canConfirmBooking(n(advance), settings.confirmationMinimum);
+  const effectiveStatus = statusForAdvance(n(advance), status, settings.confirmationMinimum);
+
+  /**
+   * Park an unfinished form again without turning it into a booking. Only
+   * offered while the booking is still a draft — once it is real, "Save
+   * Changes" is the only way out.
+   */
+  async function keepAsDraft() {
+    setDraftSaving(true);
+    setError(null);
+    const { error: err } = await supabase
+      .from("bookings")
+      .update({
+        venues: selectedVenues,
+        session,
+        event_date: date,
+        title: title || null,
+        client: client.trim(),
+        phone,
+        phone2,
+        cnic,
+        email,
+        function_type: functionType,
+        function_type_other: functionType === "Other" ? functionTypeOther : null,
+        entry_test_type: isEntryTest ? entryTestType.trim() : null,
+        guests: n(guests),
+        menu_id: isEntryTest || isCustomMenu ? null : menuId || null,
+        is_custom_menu: isCustomMenu,
+        per_head_rate: isEntryTest ? 0 : n(perHeadRate),
+        removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
+        discount: n(discount),
+        reference,
+        decoration: n(decoration),
+        heaters: n(heaters),
+        cooling,
+        advance: n(advance),
+        notes,
+        status: "Draft",
+      })
+      .eq("id", bookingId);
+    setDraftSaving(false);
+    if (err) return setError(err.message);
+    router.push("/bookings?status=Draft");
+  }
 
   async function handleSave() {
     setError(null);
@@ -331,10 +389,19 @@ export default function EditBookingPage() {
 
   return (
     <div className="max-w-3xl">
-      <div className="text-xl font-bold font-serif text-primary mb-4">Edit Booking</div>
-      <div className="text-[11.5px] text-muted bg-bg border border-dashed border-border rounded-lg px-3 py-2 mb-4">
-        Editing Ref #{bookingId.slice(0, 8).toUpperCase()} — changes save immediately and sync to everyone viewing this booking.
+      <div className="text-xl font-bold font-serif text-primary mb-4">
+        {isDraft ? "Resume Draft" : "Edit Booking"}
       </div>
+      {isDraft ? (
+        <div className="text-[11.5px] text-[#6B5320] bg-gold-light border border-gold/30 rounded-lg px-3 py-2 mb-4">
+          This form was left unfinished. It holds no date on the calendar and counts towards nothing yet —
+          finish it and press <b>Save Booking</b> to make it real, or <b>Keep as Draft</b> to park it again.
+        </div>
+      ) : (
+        <div className="text-[11.5px] text-muted bg-bg border border-dashed border-border rounded-lg px-3 py-2 mb-4">
+          Editing Ref #{bookingId.slice(0, 8).toUpperCase()} — changes save immediately and sync to everyone viewing this booking.
+        </div>
+      )}
 
       <div className="card">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -458,7 +525,7 @@ export default function EditBookingPage() {
                 Rate <span className="normal-case font-normal">(fixed for all entry tests)</span>
               </label>
               <div className="w-full mt-1 text-sm font-semibold text-gold-deep px-3 py-2 border border-border rounded-lg bg-bg">
-                {money(ENTRY_TEST_RATE)} / head
+                {money(settings.entryTestRate)} / head
               </div>
             </div>
           ) : (
@@ -590,7 +657,7 @@ export default function EditBookingPage() {
           </div>
           <div className="sm:col-span-2 flex items-center gap-2 text-sm">
             <input type="checkbox" checked={cooling} onChange={(e) => setCooling(e.target.checked)} />
-            Cooling required (+Rs. 100,000 per hall selected)
+            Cooling required (+{money(settings.coolingCharge)} per hall selected)
           </div>
 
           <div className="sm:col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
@@ -598,7 +665,7 @@ export default function EditBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">
-              Advance Paid <span className="normal-case font-normal">(Rs. {CONFIRMATION_MINIMUM.toLocaleString()} min. to confirm)</span>
+              Advance Paid <span className="normal-case font-normal">(Rs. {settings.confirmationMinimum.toLocaleString()} min. to confirm)</span>
             </label>
             <input
               type="number"
@@ -621,7 +688,7 @@ export default function EditBookingPage() {
             <div className="text-[11px] text-muted mt-1">
               {advancePaid
                 ? "Advance received — this booking can be confirmed."
-                : `Tentative until an advance of at least Rs. ${CONFIRMATION_MINIMUM.toLocaleString()} is received.`}
+                : `Tentative until an advance of at least Rs. ${settings.confirmationMinimum.toLocaleString()} is received.`}
             </div>
           </div>
           <div className="sm:col-span-2">
@@ -636,11 +703,11 @@ export default function EditBookingPage() {
         <div className="bg-primary-dim rounded-lg p-4 mt-4 grid grid-cols-2 gap-2 text-[12.5px]">
           <div className="text-gold-deep opacity-85">
             {isEntryTest
-              ? `Entry Test Fee (${n(guests)} × ${money(ENTRY_TEST_RATE)})`
+              ? `Entry Test Fee (${n(guests)} × ${money(settings.entryTestRate)})`
               : `Food Subtotal (${n(guests)} × ${money(n(perHeadRate))}/head)`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(totals.foodSubtotal)}</div>
-          <div className="text-gold-deep opacity-85">KPRA Tax (15%)</div>
+          <div className="text-gold-deep opacity-85">KPRA Tax ({+(settings.kpraRate * 100).toFixed(2)}%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.kprTax)}</div>
           <div className="text-gold-deep opacity-85">Hall Charge{selectedVenues.length > 1 ? " (both halls)" : ""}</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.hallCharge)}</div>
@@ -664,12 +731,21 @@ export default function EditBookingPage() {
 
         {error && <div className="text-rose text-sm font-semibold mt-3">{error}</div>}
 
-        <div className="flex justify-end gap-2.5 mt-5">
+        <div className="flex justify-end gap-2.5 mt-5 flex-wrap">
           <button onClick={() => router.back()} className="btn-ghost rounded-lg px-4 py-2 text-sm">
             Discard Changes
           </button>
+          {isDraft && (
+            <button
+              onClick={keepAsDraft}
+              disabled={draftSaving}
+              className="btn-ghost rounded-lg px-4 py-2 text-sm disabled:opacity-40"
+            >
+              {draftSaving ? "Saving draft…" : "Keep as Draft"}
+            </button>
+          )}
           <button onClick={handleSave} disabled={saving} className="btn-primary rounded-lg px-4 py-2 text-sm">
-            {saving ? "Saving…" : "Save Changes"}
+            {saving ? "Saving…" : isDraft ? "Save Booking" : "Save Changes"}
           </button>
         </div>
       </div>

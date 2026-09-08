@@ -30,6 +30,9 @@ export default function LedgerPage() {
   const [deleteTarget, setDeleteTarget] = useState<LedgerEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [month, setMonth] = useState<string>(currentMonth());
+  // Free-text search over whatever the office is likely to remember about an
+  // entry: what it was for, who took the money, or roughly how much it was.
+  const [search, setSearch] = useState("");
 
   async function load() {
     // Joins the recording staff member's name in the same query — shown in
@@ -74,8 +77,23 @@ export default function LedgerPage() {
   // when they open the page — today's entries, not January's.
   const rows = useMemo(() => {
     const scoped = month === ALL_MONTHS ? allRows : allRows.filter((e) => e.entry_date.slice(0, 7) === month);
-    return [...scoped].reverse();
-  }, [allRows, month]);
+    const q = search.trim().toLowerCase();
+    const matched = q
+      ? scoped.filter((e) => {
+          const digits = q.replace(/\D/g, "");
+          return (
+            (e.description || "").toLowerCase().includes(q) ||
+            (e.handed_to || "").toLowerCase().includes(q) ||
+            (e.category || "").toLowerCase().includes(q) ||
+            (e.profiles?.full_name || "").toLowerCase().includes(q) ||
+            e.type.includes(q) ||
+            fmtDMY(e.entry_date).includes(q) ||
+            (digits.length >= 2 && String(Math.round(e.amount)).includes(digits))
+          );
+        })
+      : scoped;
+    return [...matched].reverse();
+  }, [allRows, month, search]);
 
   const income = rows.filter((e) => e.type === "income").reduce((s, e) => s + e.amount, 0);
   const expense = rows.filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0);
@@ -195,6 +213,15 @@ export default function LedgerPage() {
             <option value={ALL_MONTHS}>All time</option>
           </select>
         </div>
+        <div className="flex-1 min-w-[220px]">
+          <label className="text-xs font-bold text-muted uppercase">Search</label>
+          <input
+            className="w-full mt-1 text-sm"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Description, who it was handed to, or an amount…"
+          />
+        </div>
         <div className="flex items-end gap-2">
           <div className="text-[11.5px] text-muted mr-1 mb-2 hidden sm:block">
             {rows.length} entr{rows.length === 1 ? "y" : "ies"} in {periodLabel} · newest first
@@ -293,7 +320,9 @@ export default function LedgerPage() {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={readOnly ? 7 : 8} className="text-center py-8 text-muted text-sm">
-                  No entries recorded for {periodLabel}
+                  {search.trim()
+                    ? `No entries in ${periodLabel} match “${search.trim()}”`
+                    : `No entries recorded for ${periodLabel}`}
                 </td>
               </tr>
             )}

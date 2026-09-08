@@ -1,7 +1,8 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "./calculations";
-import { SESSION_TIMES, ENTRY_TEST_RATE } from "./constants";
+import { SESSION_TIMES } from "./constants";
+import { DEFAULT_SETTINGS, type ChargeSettings } from "./settings";
 import { fmtDMY, fmtDMYTime } from "./dateFormat";
 import { bookingRef, clientName } from "@/types";
 import type { Booking, Venue, Menu, BookingAddon } from "@/types";
@@ -53,12 +54,15 @@ export function generateDocumentPdf(
   menus: Menu[],
   addons: BookingAddon[] = [],
   docType: DocType = "Agreement",
-  logoDataUri?: string
+  logoDataUri?: string,
+  // KPRA and the entry-test rate are set by the Admin on Menus & Venues; the
+  // code constants are the fallback if they haven't loaded.
+  settings: ChargeSettings = DEFAULT_SETTINGS
 ) {
   const cfg = DOC_CONFIG[docType];
   const menu = menus.find((m) => m.id === booking.menu_id);
   const venueList = booking.venues.map((id) => venues.find((v) => v.id === id)).filter((v): v is Venue => Boolean(v));
-  const t = chargesFromBooking(booking, venues, menus);
+  const t = chargesFromBooking(booking, venues, menus, settings);
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
@@ -117,7 +121,7 @@ export function generateDocumentPdf(
   const contactLine = booking.phone2 ? `${booking.phone || "-"}  /  ${booking.phone2}` : booking.phone || "-";
   const isEntryTest = booking.function_type === "Entry Test";
   const menuLine = isEntryTest
-    ? `${money(ENTRY_TEST_RATE)} / head — no menu (Entry Test)`
+    ? `${money(settings.entryTestRate)} / head — no menu (Entry Test)`
     : booking.is_custom_menu
     ? "Customized Menu — see itemized list below"
     : menu
@@ -203,14 +207,14 @@ export function generateDocumentPdf(
   y += 8;
 
   const foodLabel = isEntryTest
-    ? `Entry Test Fee (${booking.guests} x ${money(ENTRY_TEST_RATE)})`
+    ? `Entry Test Fee (${booking.guests} x ${money(settings.entryTestRate)})`
     : booking.is_custom_menu
     ? "Customized Menu Total"
     : `Food Subtotal (${booking.guests} x ${money(booking.per_head_rate)}/head)`;
 
   const charges: [string, string, string][] = [
     [foodLabel, "", money(t.foodSubtotal)],
-    ["KPRA Tax", "15%", "+ " + money(t.kprTax)],
+    ["KPRA Tax", `${+(settings.kpraRate * 100).toFixed(2)}%`, "+ " + money(t.kprTax)],
     ["Hall Charge", t.hallCharge ? (venueList.length > 1 ? "Both halls" : "Applied") : "Waived (200+ guests)", "+ " + money(t.hallCharge)],
     ["Decoration", "", "+ " + money(t.decoration)],
     ["Cooling", booking.cooling ? "Yes" : "No", "+ " + money(t.coolingCharge)],

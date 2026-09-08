@@ -160,6 +160,12 @@ export type DiscountApproval = {
   decision_note: string | null;
   consumed_booking_id: string | null;
   consumed_at: string | null;
+  /**
+   * Set when the requester clears the decision notice off their dashboard.
+   * The request itself is never deleted — it stays in the discount history so
+   * the record of what was asked for and what was granted survives.
+   */
+  dismissed_at: string | null;
   created_at: string;
   profiles?: { full_name: string } | null; // joined requester name
 };
@@ -175,7 +181,14 @@ export function discountLimitLabel(role: Role): string {
   return "Rs. " + lim.toLocaleString("en-PK") + " per booking";
 }
 
-export type BookingStatus = "Tentative" | "Confirmed" | "Cancelled";
+/**
+ * "Draft" is a booking form that was started but never properly saved. It
+ * holds no date, appears on no calendar, blocks no venue and counts towards no
+ * total — it exists only so whoever started it can pick up where they left
+ * off. It becomes Tentative or Confirmed the moment the form is saved for
+ * real.
+ */
+export type BookingStatus = "Draft" | "Tentative" | "Confirmed" | "Cancelled";
 export type Session = "Lunch" | "Dinner";
 
 export type ClientTitle = "Mr." | "Mrs." | "Ms.";
@@ -379,16 +392,17 @@ export function clientName(b: Pick<Booking, "title" | "client">): string {
  * The same rule is enforced by the enforce_advance_status() trigger in the
  * database, so it holds even outside the app.
  */
-export function canConfirmBooking(advance: number): boolean {
-  return advance >= CONFIRMATION_MINIMUM;
+export function canConfirmBooking(advance: number, minimum: number = CONFIRMATION_MINIMUM): boolean {
+  return advance >= minimum;
 }
 
 export function statusForAdvance(
   advance: number,
-  desired: BookingStatus
+  desired: BookingStatus,
+  minimum: number = CONFIRMATION_MINIMUM
 ): BookingStatus {
-  if (desired === "Cancelled") return "Cancelled";
-  return canConfirmBooking(advance) ? desired : "Tentative";
+  if (desired === "Cancelled" || desired === "Draft") return desired;
+  return canConfirmBooking(advance, minimum) ? desired : "Tentative";
 }
 
 export function bookingRef(b: Pick<Booking, "booking_number" | "id">): string {

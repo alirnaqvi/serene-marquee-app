@@ -26,7 +26,9 @@ export default function CalendarPage() {
     async function load() {
       const [{ data: v }, { data: b }] = await Promise.all([
         supabase.from("venues").select("*"),
-        supabase.from("bookings").select("*").neq("status", "Cancelled"),
+        // A draft is a half-filled form, not a booking: it holds no date on
+        // the calendar and blocks nothing until it is properly saved.
+        supabase.from("bookings").select("*").not("status", "in", '("Cancelled","Draft")'),
       ]);
       setVenues(v || []);
       setBookings(b || []);

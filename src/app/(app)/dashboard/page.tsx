@@ -2,8 +2,10 @@ import Link from "next/link";
 import { CalendarClock, Wallet, TrendingUp, TrendingDown, ArrowUpRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import DiscountApprovals from "@/components/DiscountApprovals";
+import DiscountHistoryCard from "@/components/DiscountHistoryCard";
 import { PrivateFigures, PrivacyToggle, Masked } from "@/components/PrivateFigures";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
+import { fetchSettings } from "@/lib/settings";
 import { clientName } from "@/types";
 import type { Venue, Menu } from "@/types";
 
@@ -22,6 +24,7 @@ function statusPill(status: string) {
     Confirmed: "bg-primary-dim text-gold-deep",
     Tentative: "bg-gold-light text-[#8A6427]",
     Cancelled: "bg-rose-light text-rose",
+    Draft: "bg-bg text-muted border border-dashed border-border",
   };
   return (
     <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold ${styles[status] || ""}`}>
@@ -89,6 +92,8 @@ export default async function DashboardPage() {
   const hasLedgerAccess =
     role === "owner" || role === "admin" || role === "manager" || (!!canViewLedgerFlag && !isGeneralManager);
 
+  const settings = await fetchSettings(supabase);
+
   const [{ data: venues }, { data: menus }, { data: bookings }] = await Promise.all([
     supabase.from("venues").select("*"),
     supabase.from("menus").select("*"),
@@ -109,13 +114,17 @@ export default async function DashboardPage() {
   in30Days.setDate(in30Days.getDate() + 30);
   const in30DaysStr = in30Days.toISOString().slice(0, 10);
 
-  const activeBookings = (bookings || []).filter((b: any) => b.status !== "Cancelled");
+  // Drafts are half-filled forms, not bookings: they hold no date and count
+  // towards no figure until they are properly saved.
+  const activeBookings = (bookings || []).filter(
+    (b: any) => b.status !== "Cancelled" && b.status !== "Draft"
+  );
   const upcomingWithin30Days = activeBookings.filter(
     (b: any) => b.event_date >= today && b.event_date <= in30DaysStr
   );
   const upcoming = activeBookings.filter((b: any) => b.event_date >= today).slice(0, 8);
   const totalDue = activeBookings.reduce(
-    (sum: number, b: any) => sum + chargesFromBooking(b, venues as Venue[], menus as Menu[]).balance,
+    (sum: number, b: any) => sum + chargesFromBooking(b, venues as Venue[], menus as Menu[], settings).balance,
     0
   );
   const income = (ledger || []).filter((l: any) => l.type === "income").reduce((s: number, l: any) => s + l.amount, 0);
@@ -138,7 +147,7 @@ export default async function DashboardPage() {
       </div>
 
       <div
-        className={`grid ${hasLedgerAccess ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-1 max-w-xs"} gap-3 sm:gap-4 mt-5 mb-5 stagger`}
+        className={`grid ${hasLedgerAccess ? "grid-cols-2 lg:grid-cols-5" : "grid-cols-2 max-w-lg"} gap-3 sm:gap-4 mt-5 mb-5 stagger`}
       >
         <StatCard
           href="/calendar"
@@ -148,6 +157,9 @@ export default async function DashboardPage() {
           icon={CalendarClock}
           tone="primary"
         />
+        {/* Pending / approved / declined discount requests — the whole history
+            is one tap away. */}
+        <DiscountHistoryCard />
         {hasLedgerAccess && (
           <>
             <StatCard
@@ -211,7 +223,7 @@ export default async function DashboardPage() {
                 </tr>
               )}
               {upcoming.map((b: any) => {
-                const t = chargesFromBooking(b, venues as Venue[], menus as Menu[]);
+                const t = chargesFromBooking(b, venues as Venue[], menus as Menu[], settings);
                 return (
                   <tr key={b.id} className="border-b border-border last:border-0 hover:bg-[#FBF8ED]">
                     <td className="py-2.5 px-2">

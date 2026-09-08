@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
-import { CONFIRMATION_MINIMUM, ENTRY_TEST_RATE } from "@/lib/constants";
+import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { FUNCTION_TYPES, CLIENT_TITLES, clientName, canConfirmBooking, type ClientTitle } from "@/types";
 import type { Venue, Menu, Booking, AddonItem } from "@/types";
 import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
@@ -36,6 +36,21 @@ export default function NewBookingPage() {
   const [error, setError] = useState<string | null>(null);
   const [conflictAlert, setConflictAlert] = useState<string | null>(null);
   const [now, setNow] = useState<Date | null>(null);
+  // Charge rules (KPRA %, cooling, heating, entry-test rate, the advance
+  // needed to confirm) come from the Admin's Menus & Venues settings, so a
+  // policy change reaches this form without a code change.
+  const [settings, setSettings] = useState<ChargeSettings>(DEFAULT_SETTINGS);
+
+  // ---- Draft ------------------------------------------------------------
+  // A form left half-finished isn't thrown away: it is parked as a Draft that
+  // can be reopened from Bookings and carried on. A draft holds no date on the
+  // calendar, blocks no venue and counts towards no total — it only becomes a
+  // real (Tentative/Confirmed) booking when Save Booking is pressed.
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftNumber, setDraftNumber] = useState<number | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const draftIdRef = useRef<string | null>(null);
 
   const presetVenue = searchParams.get("venue") || "";
   const presetDate = searchParams.get("date") || "";
@@ -71,7 +86,7 @@ export default function NewBookingPage() {
   // A booking is only Confirmed once an advance of at least Rs. 25,000 has
   // been received. Below that the status is forced to Tentative and the
   // dropdown locks, so it can't be marked Confirmed by mistake.
-  const advancePaid = canConfirmBooking(n(advance));
+  const advancePaid = canConfirmBooking(n(advance), settings.confirmationMinimum);
   const effectiveStatus: "Tentative" | "Confirmed" = advancePaid ? status : "Tentative";
   const [notes, setNotes] = useState("");
 
@@ -85,13 +100,15 @@ export default function NewBookingPage() {
         supabase.from("venues").select("*"),
         supabase.from("menus").select("*"),
         supabase.from("addon_items").select("*"),
-        supabase.from("bookings").select("*").neq("status", "Cancelled"),
+        // Drafts reserve nothing, so they never count as a clash.
+        supabase.from("bookings").select("*").not("status", "in", '("Cancelled","Draft")'),
       ]);
       setVenues(v || []);
       setMenus(m || []);
       setAddonItems(a || []);
       setExistingBookings(b || []);
       if (m && m.length && !menuId) setMenuId(m[0].id);
+      setSettings(await fetchSettings(supabase));
     }
     load();
     setNow(new Date());
@@ -172,8 +189,97 @@ export default function NewBookingPage() {
       advance: n(advance),
     },
     venues,
-    menus
+    menus,
+    settings
   );
+
+  /**
+   * Everything the form currently holds, in the shape the bookings table
+   * wants. Shared by "save as draft" and the real save so the two can never
+   * drift apart.
+   */
+  function formRow() {
+    return {
+      venues: selectedVenues,
+      session,
+      event_date: date,
+      title: title || null,
+      client: client.trim(),
+      phone,
+      phone2,
+      cnic,
+      email,
+      function_type: functionType,
+      function_type_other: functionType === "Other" ? functionTypeOther : null,
+      entry_test_type: isEntryTest ? entryTestType.trim() : null,
+      guests: n(guests),
+      menu_id: isEntryTest || isCustomMenu ? null : menuId || null,
+      is_custom_menu: isCustomMenu,
+      per_head_rate: isEntryTest ? 0 : n(perHeadRate),
+      removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
+      discount: n(discount),
+      reference,
+      decoration: n(decoration),
+      heaters: n(heaters),
+      cooling,
+      advance: n(advance),
+      notes,
+    };
+  }
+
+  // Only park a draft once the form has actually been started — an empty form
+  // someone opened and walked away from is not worth keeping.
+  const draftWorthKeeping =
+    Boolean(client.trim()) || selectedVenues.length > 0 || n(guests) > 0 || n(perHeadRate) > 0;
+
+  const saveDraft = useCallback(
+    async (): Promise<string | null> => {
+      if (readOnly) return null;
+      setDraftSaving(true);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const row = { ...formRow(), status: "Draft" as const };
+
+      if (draftIdRef.current) {
+        const { error: err } = await supabase
+          .from("bookings")
+          .update(row)
+          .eq("id", draftIdRef.current);
+        setDraftSaving(false);
+        if (err) return null;
+        setDraftSavedAt(new Date());
+        return draftIdRef.current;
+      }
+
+      const { data: created, error: err } = await supabase
+        .from("bookings")
+        .insert({ ...row, created_by: user?.id })
+        .select()
+        .single();
+      setDraftSaving(false);
+      if (err || !created) return null;
+      draftIdRef.current = created.id;
+      setDraftId(created.id);
+      setDraftNumber(created.booking_number ?? null);
+      setDraftSavedAt(new Date());
+      return created.id;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      readOnly, selectedVenues, session, date, title, client, phone, phone2, cnic, email,
+      functionType, functionTypeOther, entryTestType, guests, menuId, isCustomMenu, isEntryTest,
+      perHeadRate, removedMenuItems, discount, reference, decoration, heaters, cooling, advance, notes,
+    ]
+  );
+
+  // Park the work in the background a couple of seconds after typing stops, so
+  // a closed tab, a dead battery or a phone call doesn't cost the whole form.
+  useEffect(() => {
+    if (readOnly || !draftWorthKeeping) return;
+    const t = setTimeout(() => saveDraft(), 2500);
+    return () => clearTimeout(t);
+  }, [saveDraft, draftWorthKeeping, readOnly]);
 
   async function handleSave() {
     setError(null);
@@ -206,43 +312,32 @@ export default function NewBookingPage() {
       data: { user },
     } = await supabase.auth.getUser();
 
-    const { data: inserted, error: insertError } = await supabase
-      .from("bookings")
-      .insert({
-        venues: selectedVenues,
-        session,
-        event_date: date,
-        title: title || null,
-        client: client.trim(),
-        phone,
-        phone2,
-        cnic,
-        email,
-        function_type: functionType,
-        function_type_other: functionType === "Other" ? functionTypeOther : null,
-        entry_test_type: isEntryTest ? entryTestType.trim() : null,
-        guests: n(guests),
-        menu_id: isEntryTest || isCustomMenu ? null : menuId,
-        is_custom_menu: isCustomMenu,
-        per_head_rate: isEntryTest ? 0 : n(perHeadRate),
-        removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
-        discount: n(discount),
-        reference,
-        decoration: n(decoration),
-        heaters: n(heaters),
-        cooling,
-        advance: n(advance),
-        notes,
-        status: effectiveStatus,
-        created_by: user?.id,
-      })
-      .select()
-      .single();
+    // If this form was already parked as a draft, promote that same row —
+    // otherwise saving would leave the draft behind as a duplicate.
+    const query = draftIdRef.current
+      ? supabase
+          .from("bookings")
+          .update({ ...formRow(), status: effectiveStatus })
+          .eq("id", draftIdRef.current)
+          .select()
+          .single()
+      : supabase
+          .from("bookings")
+          .insert({ ...formRow(), status: effectiveStatus, created_by: user?.id })
+          .select()
+          .single();
+
+    const { data: inserted, error: insertError } = await query;
 
     if (insertError) {
       setError(insertError.message);
       setSaving(false);
       return;
+    }
+
+    // A promoted draft may still carry add-on rows from an earlier pass.
+    if (draftIdRef.current) {
+      await supabase.from("booking_addons").delete().eq("booking_id", draftIdRef.current);
     }
 
     const activeSelection = isCustomMenu ? customSelection : addOnSelection;
@@ -302,6 +397,12 @@ export default function NewBookingPage() {
               })
             : "…"}
         </b>
+      </div>
+
+      <div className="text-[11.5px] text-[#6B5320] bg-gold-light border border-gold/30 rounded-lg px-3 py-2 mb-4">
+        Nothing is lost if you stop halfway. This form saves itself as a <b>draft</b> as you fill it in, and
+        you can reopen it from Bookings. A draft doesn't appear on the calendar and doesn't hold the date —
+        it becomes a real booking only when you press <b>Save Booking</b>.
       </div>
 
       <div className="card">
@@ -435,7 +536,7 @@ export default function NewBookingPage() {
                 Rate <span className="normal-case font-normal">(fixed for all entry tests)</span>
               </label>
               <div className="w-full mt-1 text-sm font-semibold text-gold-deep px-3 py-2 border border-border rounded-lg bg-bg">
-                {money(ENTRY_TEST_RATE)} / head
+                {money(settings.entryTestRate)} / head
               </div>
             </div>
           ) : (
@@ -523,6 +624,8 @@ export default function NewBookingPage() {
             value={discount}
             onChange={setDiscount}
             context={{
+              bookingId: draftId ?? undefined,
+              bookingNumber: draftNumber,
               clientName: client,
               eventDate: date,
               guests: n(guests),
@@ -569,7 +672,7 @@ export default function NewBookingPage() {
           </div>
           <div className="sm:col-span-2 flex items-center gap-2 text-sm">
             <input type="checkbox" checked={cooling} onChange={(e) => setCooling(e.target.checked)} />
-            Cooling required (+Rs. 100,000 per hall selected)
+            Cooling required (+{money(settings.coolingCharge)} per hall selected)
           </div>
 
           <div className="sm:col-span-2 text-xs font-bold text-gold-deep uppercase tracking-wide mt-3 pt-3 border-t border-border">
@@ -577,7 +680,7 @@ export default function NewBookingPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">
-              Advance Paid <span className="normal-case font-normal">(Rs. {CONFIRMATION_MINIMUM.toLocaleString()} min. to confirm)</span>
+              Advance Paid <span className="normal-case font-normal">(Rs. {settings.confirmationMinimum.toLocaleString()} min. to confirm)</span>
             </label>
             <input
               type="number"
@@ -600,7 +703,7 @@ export default function NewBookingPage() {
             <div className="text-[11px] text-muted mt-1">
               {advancePaid
                 ? "Advance received — this booking can be confirmed."
-                : `Tentative until an advance of at least Rs. ${CONFIRMATION_MINIMUM.toLocaleString()} is received.`}
+                : `Tentative until an advance of at least Rs. ${settings.confirmationMinimum.toLocaleString()} is received.`}
             </div>
           </div>
           <div className="sm:col-span-2">
@@ -615,11 +718,11 @@ export default function NewBookingPage() {
         <div className="bg-primary-dim rounded-lg p-4 mt-4 grid grid-cols-2 gap-2 text-[12.5px]">
           <div className="text-gold-deep opacity-85">
             {isEntryTest
-              ? `Entry Test Fee (${n(guests)} × ${money(ENTRY_TEST_RATE)})`
+              ? `Entry Test Fee (${n(guests)} × ${money(settings.entryTestRate)})`
               : `Food Subtotal (${n(guests)} × ${money(n(perHeadRate))}/head)`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(totals.foodSubtotal)}</div>
-          <div className="text-gold-deep opacity-85">KPRA Tax (15%)</div>
+          <div className="text-gold-deep opacity-85">KPRA Tax ({+(settings.kpraRate * 100).toFixed(2)}%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.kprTax)}</div>
           <div className="text-gold-deep opacity-85">Hall Charge{selectedVenues.length > 1 ? " (both halls)" : ""}</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.hallCharge)}</div>
@@ -643,9 +746,27 @@ export default function NewBookingPage() {
 
         {error && <div className="text-rose text-sm font-semibold mt-3">{error}</div>}
 
-        <div className="flex justify-end gap-2.5 mt-5">
+        <div className="flex justify-end items-center gap-2.5 mt-5 flex-wrap">
+          {draftSavedAt && (
+            <div className="text-[11.5px] text-muted mr-auto">
+              Draft saved at{" "}
+              {draftSavedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} — you can
+              close this and pick it up from Bookings.
+            </div>
+          )}
           <button onClick={() => router.back()} className="btn-ghost rounded-lg px-4 py-2 text-sm">
             Cancel
+          </button>
+          <button
+            onClick={async () => {
+              const id = await saveDraft();
+              if (id) router.push("/bookings?status=Draft");
+            }}
+            disabled={draftSaving || !draftWorthKeeping}
+            className="btn-ghost rounded-lg px-4 py-2 text-sm disabled:opacity-40"
+            title="Park this form and finish it later"
+          >
+            {draftSaving ? "Saving draft…" : "Save as Draft"}
           </button>
           <button onClick={handleSave} disabled={saving} className="btn-primary rounded-lg px-4 py-2 text-sm">
             {saving ? "Saving…" : "Save Booking"}

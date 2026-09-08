@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
+import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { fmtDMY } from "@/lib/dateFormat";
 import { useSession } from "@/components/SessionContext";
 import { downloadXlsx, monthName, currentMonth, recentMonths, monthBounds, type SheetColumn } from "@/lib/xlsx";
@@ -41,6 +42,7 @@ function statusPill(status: string) {
     Confirmed: "bg-primary-dim text-gold-deep",
     Tentative: "bg-gold-light text-[#8A6427]",
     Cancelled: "bg-rose-light text-rose",
+    Draft: "bg-bg text-muted border border-dashed border-border",
   };
   return (
     <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold ${styles[status] || ""}`}>
@@ -63,13 +65,16 @@ export default function BookingsPage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [settings, setSettings] = useState<ChargeSettings>(DEFAULT_SETTINGS);
   const [search, setSearch] = useState("");
   // Dates use real calendar pickers, so nobody has to guess whether to type
   // 09-12-2026 or 12-09-2026. A range covers both "one day" (set both to the
   // same date) and "this month" (the month buttons fill both in).
   const [dateFrom, setDateFrom] = useState(searchParams.get("date") || "");
   const [dateTo, setDateTo] = useState(searchParams.get("date") || "");
-  const [statusFilter, setStatusFilter] = useState<"all" | "Confirmed" | "Tentative" | "Cancelled">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "Confirmed" | "Tentative" | "Cancelled" | "Draft">(
+    (searchParams.get("status") as any) || "all"
+  );
 
   useEffect(() => {
     async function load() {
@@ -81,6 +86,7 @@ export default function BookingsPage() {
       setVenues(v || []);
       setMenus(m || []);
       setBookings(b || []);
+      setSettings(await fetchSettings(supabase));
     }
     load();
 
@@ -123,12 +129,16 @@ export default function BookingsPage() {
   // Summary over whatever is currently filtered — so "this month" and "1 Sep
   // to 15 Sep" both produce a total without a separate report screen.
   const summary = useMemo(() => {
-    const live = rows.filter((b) => b.status !== "Cancelled");
+    // Drafts are unfinished forms, so they are counted nowhere: not in the
+    // booking count, not in guests, and not in any money figure.
+    const counted = rows.filter((b) => b.status !== "Draft");
+    const live = counted.filter((b) => b.status !== "Cancelled");
     const acc = {
-      count: rows.length,
-      confirmed: rows.filter((b) => b.status === "Confirmed").length,
-      tentative: rows.filter((b) => b.status === "Tentative").length,
-      cancelled: rows.filter((b) => b.status === "Cancelled").length,
+      count: counted.length,
+      confirmed: counted.filter((b) => b.status === "Confirmed").length,
+      tentative: counted.filter((b) => b.status === "Tentative").length,
+      cancelled: counted.filter((b) => b.status === "Cancelled").length,
+      drafts: rows.filter((b) => b.status === "Draft").length,
       guests: 0,
       gross: 0,
       discount: 0,
@@ -137,18 +147,18 @@ export default function BookingsPage() {
       refunded: 0,
     };
     live.forEach((b) => {
-      const t = chargesFromBooking(b, venues, menus);
+      const t = chargesFromBooking(b, venues, menus, settings);
       acc.guests += b.guests;
       acc.gross += t.grandTotal;
       acc.discount += t.discountAmount;
       acc.advance += b.advance;
       acc.balance += t.balance;
     });
-    rows.filter((b) => b.advance_refunded).forEach((b) => {
+    counted.filter((b) => b.advance_refunded).forEach((b) => {
       acc.refunded += b.refund_amount;
     });
     return acc;
-  }, [rows, venues, menus]);
+  }, [rows, venues, menus, settings]);
 
   function setMonthRange(month: string) {
     const { from, to } = monthBounds(month);
@@ -175,12 +185,12 @@ export default function BookingsPage() {
     { header: "Venue(s)", value: (b) => venueNames(b), width: 22 },
     { header: "Function", value: (b) => functionLabel(b), width: 18 },
     { header: "Guests", value: (b) => b.guests },
-    { header: "Food Subtotal", value: (b) => Math.round(chargesFromBooking(b, venues, menus).foodSubtotal), money: true },
-    { header: "Discount", value: (b) => Math.round(chargesFromBooking(b, venues, menus).discountAmount), money: true },
-    { header: "Grand Total", value: (b) => Math.round(chargesFromBooking(b, venues, menus).grandTotal), money: true },
+    { header: "Food Subtotal", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).foodSubtotal), money: true },
+    { header: "Discount", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).discountAmount), money: true },
+    { header: "Grand Total", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).grandTotal), money: true },
     { header: "Advance", value: (b) => Math.round(b.advance), money: true },
     { header: "Refunded", value: (b) => Math.round(b.advance_refunded ? b.refund_amount : 0), money: true },
-    { header: "Balance", value: (b) => Math.round(chargesFromBooking(b, venues, menus).balance), money: true },
+    { header: "Balance", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).balance), money: true },
     { header: "Status", value: (b) => b.status },
   ];
 
@@ -225,7 +235,9 @@ export default function BookingsPage() {
       <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
         <div>
           <div className="text-xl font-bold font-serif text-primary">Bookings & Agreements</div>
-          <div className="text-xs text-muted mt-0.5">All confirmed and tentative functions</div>
+          <div className="text-xs text-muted mt-0.5">
+            All confirmed and tentative functions — unfinished drafts are listed too, and counted nowhere
+          </div>
         </div>
         {!readOnly && (
           <button onClick={() => router.push("/bookings/new")} className="btn-primary rounded-lg px-4 py-2 text-sm">
@@ -282,6 +294,7 @@ export default function BookingsPage() {
               <option value="Confirmed">Confirmed</option>
               <option value="Tentative">Tentative</option>
               <option value="Cancelled">Cancelled</option>
+              <option value="Draft">Draft (unfinished)</option>
             </select>
           </div>
           <button
@@ -320,7 +333,13 @@ export default function BookingsPage() {
           {statusFilter !== "all" && <span className="font-normal text-muted"> · {statusFilter} only</span>}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <Stat label="Bookings" value={String(summary.count)} sub={`${summary.confirmed} confirmed · ${summary.tentative} tentative`} />
+          <Stat
+            label="Bookings"
+            value={String(summary.count)}
+            sub={`${summary.confirmed} confirmed · ${summary.tentative} tentative${
+              summary.drafts > 0 ? ` · ${summary.drafts} draft` : ""
+            }`}
+          />
           <Stat label="Cancelled" value={String(summary.cancelled)} sub={summary.refunded > 0 ? `${money(summary.refunded)} refunded` : "none refunded"} />
           <Stat label="Guests" value={summary.guests.toLocaleString("en-PK")} sub="excludes cancelled" />
           <Stat label="Gross Total" value={money(summary.gross)} sub={`after ${money(summary.discount)} discount`} />
@@ -354,7 +373,7 @@ export default function BookingsPage() {
               </tr>
             )}
             {rows.map((b) => {
-              const t = chargesFromBooking(b, venues, menus);
+              const t = chargesFromBooking(b, venues, menus, settings);
               return (
                 <tr key={b.id} className="border-b border-border last:border-0 hover:bg-[#FBF8ED]">
                   <td className="py-2.5 px-2 text-[11.5px] text-muted font-semibold whitespace-nowrap">{bookingRef(b)}</td>
@@ -377,8 +396,13 @@ export default function BookingsPage() {
                   </td>
                   <td className="py-2.5 px-2">{statusPill(b.status)}</td>
                   <td className="py-2.5 px-2">
-                    <Link href={`/bookings/${b.id}`} className="btn-ghost rounded-md px-2.5 py-1 text-xs inline-block">
-                      Open
+                    {/* A draft has nothing to show yet — resuming it means
+                        reopening the form where it was left. */}
+                    <Link
+                      href={b.status === "Draft" ? `/bookings/${b.id}/edit` : `/bookings/${b.id}`}
+                      className="btn-ghost rounded-md px-2.5 py-1 text-xs inline-block whitespace-nowrap"
+                    >
+                      {b.status === "Draft" ? "Resume" : "Open"}
                     </Link>
                   </td>
                 </tr>

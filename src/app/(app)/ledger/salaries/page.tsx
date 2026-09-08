@@ -33,6 +33,9 @@ export default function SalariesPage() {
   const [salaryEntries, setSalaryEntries] = useState<LedgerEntry[]>([]);
   const [month, setMonth] = useState(currentMonth());
   const [showLeavers, setShowLeavers] = useState(false);
+  // Same free-text search the bookings page has, so a name, a designation or a
+  // phone number finds the right person without scrolling the whole payroll.
+  const [search, setSearch] = useState("");
   const [modal, setModal] = useState<Modal>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,10 +90,20 @@ export default function SalariesPage() {
     load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const visibleEmployees = useMemo(
-    () => employees.filter((e) => (showLeavers ? true : e.active)),
-    [employees, showLeavers]
-  );
+  const visibleEmployees = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const digits = q.replace(/\D/g, "");
+    return employees.filter((e) => {
+      if (!showLeavers && !e.active) return false;
+      if (!q) return true;
+      return (
+        e.full_name.toLowerCase().includes(q) ||
+        (e.designation || "").toLowerCase().includes(q) ||
+        (digits.length >= 3 && (e.phone || "").replace(/\D/g, "").includes(digits)) ||
+        (digits.length >= 3 && String(Math.round(e.monthly_salary)).includes(digits))
+      );
+    });
+  }, [employees, showLeavers, search]);
 
   // ---- per-employee figures for the selected month -------------------
   function bonusFor(empId: string) {
@@ -627,7 +640,13 @@ export default function SalariesPage() {
           <div className="text-[13px] font-bold text-primary">
             Employees ({visibleEmployees.length})
           </div>
-          <button onClick={() => setShowLeavers((s) => !s)} className="text-xs font-bold text-gold-deep hover:underline">
+          <input
+            className="flex-1 min-w-[200px] text-[13px]"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, designation or phone…"
+          />
+          <button onClick={() => setShowLeavers((s) => !s)} className="text-xs font-bold text-gold-deep hover:underline whitespace-nowrap">
             {showLeavers ? "Hide past employees" : `Show past employees (${employees.length - activeEmployees.length})`}
           </button>
         </div>

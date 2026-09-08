@@ -1,10 +1,10 @@
-import { KPR_RATE, COOLING_CHARGE_PER_HALL, HEATER_CHARGE, ENTRY_TEST_RATE } from "./constants";
+import { DEFAULT_SETTINGS, type ChargeSettings } from "./settings";
 import type { Venue, Menu, Booking } from "@/types";
 
 export type ChargeInput = {
   guests: number;
   venues: string[]; // venue ids
-  isEntryTest?: boolean; // Entry Test bookings: flat ENTRY_TEST_RATE/head, no menu involved
+  isEntryTest?: boolean; // Entry Test bookings: flat per-head rate, no menu involved
   perHeadRate?: number; // final per-head rate entered manually, covers menu + any extra items
   discount: number; // flat Rs. amount (not a percentage)
   decoration: number;
@@ -29,7 +29,11 @@ export type ChargeBreakdown = {
 export function calcTotals(
   input: ChargeInput,
   allVenues: Venue[],
-  allMenus: Menu[]
+  allMenus: Menu[],
+  // KPRA tax, cooling, heating and the entry-test rate are set by the Admin on
+  // the Menus & Venues screen. Falling back to the code constants keeps every
+  // total correct if the settings haven't loaded yet.
+  settings: ChargeSettings = DEFAULT_SETTINGS
 ): ChargeBreakdown {
   const venueList = input.venues
     .map((id) => allVenues.find((v) => v.id === id))
@@ -38,7 +42,7 @@ export function calcTotals(
   let foodSubtotal: number;
   if (input.isEntryTest) {
     // Entry Test bookings: flat per-head rate, no menu/offered items involved.
-    foodSubtotal = input.guests * ENTRY_TEST_RATE;
+    foodSubtotal = input.guests * settings.entryTestRate;
   } else {
     // Every other booking is priced off a single manually-entered final
     // per-head rate that already covers the menu and any extra items.
@@ -49,7 +53,7 @@ export function calcTotals(
   // applied only once, at the very end, to the fully totaled amount
   // (Food + KPRA + Hall + Decoration + Cooling/Heating), per owner policy.
   // It is a flat Rs. amount, not a percentage.
-  const kprTax = foodSubtotal * KPR_RATE;
+  const kprTax = foodSubtotal * settings.kpraRate;
 
   // Hall charge is waived once guest count reaches each selected venue's
   // minimum (currently 200+ across all three venues, per owner policy).
@@ -57,8 +61,8 @@ export function calcTotals(
     (sum, v) => sum + (input.guests < v.min_waiver ? v.hall_charge : 0),
     0
   );
-  const coolingCharge = input.cooling ? COOLING_CHARGE_PER_HALL * venueList.length : 0;
-  const heatingCharge = (input.heaters || 0) * HEATER_CHARGE;
+  const coolingCharge = input.cooling ? settings.coolingCharge * venueList.length : 0;
+  const heatingCharge = (input.heaters || 0) * settings.heaterCharge;
   const decoration = input.decoration || 0;
 
   const totalBeforeDiscount = foodSubtotal + kprTax + hallCharge + coolingCharge + heatingCharge + decoration;
@@ -96,7 +100,8 @@ export function chargesFromBooking(
     | "advance"
   >,
   allVenues: Venue[],
-  allMenus: Menu[]
+  allMenus: Menu[],
+  settings: ChargeSettings = DEFAULT_SETTINGS
 ) {
   return calcTotals(
     {
@@ -111,7 +116,8 @@ export function chargesFromBooking(
       advance: booking.advance,
     },
     allVenues,
-    allMenus
+    allMenus,
+    settings
   );
 }
 

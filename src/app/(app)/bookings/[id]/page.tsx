@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "@/lib/calculations";
-import { SESSION_TIMES, ENTRY_TEST_RATE } from "@/lib/constants";
+import { SESSION_TIMES } from "@/lib/constants";
+import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { generateDocumentPdf } from "@/lib/generateAgreementPdf";
 import AlertModal from "@/components/AlertModal";
@@ -23,6 +24,7 @@ export default function BookingDetailPage() {
   const [menus, setMenus] = useState<Menu[]>([]);
   const [addons, setAddons] = useState<BookingAddon[]>([]);
   const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<ChargeSettings>(DEFAULT_SETTINGS);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
@@ -45,6 +47,7 @@ export default function BookingDetailPage() {
     setMenus(m || []);
     setBooking(b);
     setAddons(a || []);
+    setSettings(await fetchSettings(supabase));
     setLoading(false);
   }
 
@@ -57,7 +60,7 @@ export default function BookingDetailPage() {
 
   const menu = menus.find((m) => m.id === booking.menu_id);
   const venueList = booking.venues.map((id) => venues.find((v) => v.id === id)).filter((v): v is Venue => Boolean(v));
-  const t = chargesFromBooking(booking, venues, menus);
+  const t = chargesFromBooking(booking, venues, menus, settings);
   const isCancelled = booking.status === "Cancelled";
   const isEntryTest = booking.function_type === "Entry Test";
   const canRefund = isCancelled && booking.advance > 0 && !booking.advance_refunded && !readOnly;
@@ -75,7 +78,7 @@ export default function BookingDetailPage() {
     } catch {
       /* PDF still generates without the logo if this fails */
     }
-    generateDocumentPdf(booking!, venues, menus, addons, docType, logoDataUri);
+    generateDocumentPdf(booking!, venues, menus, addons, docType, logoDataUri, settings);
   }
 
   async function handleCancel() {
@@ -231,7 +234,7 @@ export default function BookingDetailPage() {
             k={isEntryTest ? "Entry Test Rate" : "Menu"}
             v={
               isEntryTest
-                ? `${money(ENTRY_TEST_RATE)} / head — no menu`
+                ? `${money(settings.entryTestRate)} / head — no menu`
                 : booking.is_custom_menu
                 ? "Customized Menu (see items below)"
                 : menu
@@ -269,7 +272,7 @@ export default function BookingDetailPage() {
           <div className="col-span-2 text-[10.5px] uppercase tracking-wide font-bold text-gold-deep opacity-70">Charges</div>
           <div className="text-gold-deep opacity-85">
             {isEntryTest
-              ? `Entry Test Fee (${booking.guests} × ${money(ENTRY_TEST_RATE)})`
+              ? `Entry Test Fee (${booking.guests} × ${money(settings.entryTestRate)})`
               : booking.is_custom_menu
               ? "Customized Menu Total"
               : `Food Subtotal (${booking.guests} × ${money(booking.per_head_rate)}/head)`}

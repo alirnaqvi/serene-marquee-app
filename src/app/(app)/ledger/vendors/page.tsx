@@ -30,6 +30,9 @@ export default function VendorsPage() {
   const [ledgerBlocked, setLedgerBlocked] = useState(false);
   const [month, setMonth] = useState(currentMonth());
   const [showInactive, setShowInactive] = useState(false);
+  // Search the vendor list the same way the bookings page is searched — by
+  // what they supply, the shop's name, or the number the office rings.
+  const [search, setSearch] = useState("");
   const [vendorModal, setVendorModal] = useState<{ vendor?: Vendor } | null>(null);
   const [detailVendor, setDetailVendor] = useState<Vendor | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,10 +77,20 @@ export default function VendorsPage() {
     load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const visible = useMemo(
-    () => vendors.filter((v) => (showInactive ? true : v.active)),
-    [vendors, showInactive]
-  );
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const digits = q.replace(/\D/g, "");
+    return vendors.filter((v) => {
+      if (!showInactive && !v.active) return false;
+      if (!q) return true;
+      return (
+        v.category.toLowerCase().includes(q) ||
+        (v.shop_name || "").toLowerCase().includes(q) ||
+        (v.notes || "").toLowerCase().includes(q) ||
+        (digits.length >= 3 && (v.contact || "").replace(/\D/g, "").includes(digits))
+      );
+    });
+  }, [vendors, showInactive, search]);
 
   // Running balance is always computed over a vendor's FULL history in date
   // order, so a month view still shows the true carried-forward balance rather
@@ -484,7 +497,13 @@ export default function VendorsPage() {
       <div className="card">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div className="text-[13px] font-bold text-primary">Vendor List ({visible.length})</div>
-          <button onClick={() => setShowInactive((s) => !s)} className="text-xs font-bold text-gold-deep hover:underline">
+          <input
+            className="flex-1 min-w-[200px] text-[13px]"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search supplies, shop name or contact…"
+          />
+          <button onClick={() => setShowInactive((s) => !s)} className="text-xs font-bold text-gold-deep hover:underline whitespace-nowrap">
             {showInactive ? "Hide removed vendors" : `Show removed (${vendors.filter((v) => !v.active).length})`}
           </button>
         </div>
