@@ -77,7 +77,16 @@ const DOC_CONFIG: Record<DocType, { heading: string; subheading: string; showTer
   },
 };
 
-export function generateDocumentPdf(
+/**
+ * Builds the document and hands back the jsPDF object plus the file name it
+ * should carry.
+ *
+ * Separated from generateDocumentPdf() because the same document now has two
+ * destinations: downloaded to the staff member's machine, or turned into a
+ * real file and attached to a WhatsApp message. Both must be byte-for-byte the
+ * same document, so there is only ever one place it is drawn.
+ */
+export function buildDocumentPdf(
   booking: Booking,
   venues: Venue[],
   menus: Menu[],
@@ -366,7 +375,36 @@ export function generateDocumentPdf(
   }
 
   const fileName = `Serene-Marquee-${docType}-${bookingRef(booking)}-${clientName(booking).replace(/[^a-z0-9]+/gi, "-")}-${booking.event_date}.pdf`;
+  return { doc, fileName };
+}
+
+/** Draw the document and download it. */
+export function generateDocumentPdf(
+  booking: Booking,
+  venues: Venue[],
+  menus: Menu[],
+  addons: BookingAddon[] = [],
+  docType: DocType = "Agreement",
+  logoDataUri?: string,
+  settings: ChargeSettings = DEFAULT_SETTINGS
+) {
+  const { doc, fileName } = buildDocumentPdf(booking, venues, menus, addons, docType, logoDataUri, settings);
   doc.save(fileName);
+}
+
+/** Draw the document and hand it back as a real file, ready to be attached. */
+export function documentPdfFile(
+  booking: Booking,
+  venues: Venue[],
+  menus: Menu[],
+  addons: BookingAddon[] = [],
+  docType: DocType = "Agreement",
+  logoDataUri?: string,
+  settings: ChargeSettings = DEFAULT_SETTINGS
+): File {
+  const { doc, fileName } = buildDocumentPdf(booking, venues, menus, addons, docType, logoDataUri, settings);
+  const blob = doc.output("blob");
+  return new File([blob], fileName, { type: "application/pdf" });
 }
 
 // Back-compat alias — existing call sites can keep using this name.

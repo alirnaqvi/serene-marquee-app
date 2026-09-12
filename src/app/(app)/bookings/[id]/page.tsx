@@ -8,8 +8,8 @@ import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "@/
 import { SESSION_TIMES } from "@/lib/constants";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
-import { generateDocumentPdf } from "@/lib/generateAgreementPdf";
-import { toWhatsAppNumber, invoiceMessage, whatsAppLink } from "@/lib/whatsapp";
+import { generateDocumentPdf, documentPdfFile } from "@/lib/generateAgreementPdf";
+import { toWhatsAppNumber, coveringMessage, sendPdfOnWhatsApp } from "@/lib/whatsapp";
 import AlertModal from "@/components/AlertModal";
 import { useSession } from "@/components/SessionContext";
 import { bookingRef, clientName } from "@/types";
@@ -29,6 +29,8 @@ export default function BookingDetailPage() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [waError, setWaError] = useState<string | null>(null);
+  const [waNotice, setWaNotice] = useState<string | null>(null);
+  const [waBusy, setWaBusy] = useState(false);
 
   // Advance refund (only offered once a booking is cancelled)
   const [showRefund, setShowRefund] = useState(false);
@@ -68,40 +70,56 @@ export default function BookingDetailPage() {
   const canRefund = isCancelled && booking.advance > 0 && !booking.advance_refunded && !readOnly;
 
   async function handleDownloadPdf(docType: "Agreement" | "Invoice" | "Quotation") {
-    let logoDataUri: string | undefined;
+    generateDocumentPdf(booking!, venues, menus, addons, docType, await loadLogo(), settings);
+  }
+
+  /** The logo, as a data URI, for whichever document is being produced. */
+  async function loadLogo(): Promise<string | undefined> {
     try {
       const res = await fetch("/logo.png");
       const blob = await res.blob();
-      logoDataUri = await new Promise((resolve) => {
+      return await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result as string);
         reader.readAsDataURL(blob);
       });
     } catch {
-      /* PDF still generates without the logo if this fails */
+      return undefined;
     }
-    generateDocumentPdf(booking!, venues, menus, addons, docType, logoDataUri, settings);
   }
 
   /**
-   * Send the client their invoice on WhatsApp.
+   * Send the client the actual PDF on WhatsApp.
    *
-   * WhatsApp's click-to-chat link carries text but cannot carry a file, so this
-   * does both halves of the job: the PDF is downloaded first, then the chat
-   * opens with the full invoice already written out as a message. The client
-   * has the figures in the chat either way; the attachment is one tap in
-   * WhatsApp itself.
+   * On a phone this opens the share sheet with the PDF as a real file, so it
+   * arrives as an attachment in the chat. On a desktop browser that can't do
+   * that, the PDF is uploaded and WhatsApp Web opens on the client's chat with
+   * a link to it. Either way the client gets the document itself, not a
+   * retyped copy of it in a message.
    */
   async function handleSendWhatsApp(docType: "Invoice" | "Quotation" | "Agreement" = "Invoice") {
     setWaError(null);
+    setWaNotice(null);
+
     const wa = toWhatsAppNumber(booking!.phone) || toWhatsAppNumber(booking!.phone2);
     if (!wa) {
       setWaError("No usable phone number on this booking — add one under Edit first.");
       return;
     }
-    await handleDownloadPdf(docType);
-    const text = invoiceMessage(booking!, venues, menus, docType, settings);
-    window.open(whatsAppLink(wa, text), "_blank", "noopener,noreferrer");
+
+    setWaBusy(true);
+    const logo = await loadLogo();
+    const file = documentPdfFile(booking!, venues, menus, addons, docType, logo, settings);
+    const message = coveringMessage(booking!, venues, menus, docType, settings);
+
+    const result = await sendPdfOnWhatsApp({ file, waNumber: wa, message, booking: booking!, supabase });
+    setWaBusy(false);
+
+    if (result.via === "error") setWaError(result.message);
+    else if (result.via === "link")
+      setWaNotice(
+        `This browser can't attach files directly, so the ${docType.toLowerCase()} was uploaded and WhatsApp opened with a link to it. On a phone it goes as a proper attachment.`
+      );
   }
 
   async function handleCancel() {
@@ -241,10 +259,11 @@ export default function BookingDetailPage() {
             </button>
             <button
               onClick={() => handleSendWhatsApp("Invoice")}
-              className="rounded-lg px-4 py-2 text-sm whitespace-nowrap font-semibold text-white bg-[#25D366] hover:bg-[#1FB855]"
-              title="Downloads the invoice PDF and opens WhatsApp with the details written out"
+              disabled={waBusy}
+              className="rounded-lg px-4 py-2 text-sm whitespace-nowrap font-semibold text-white bg-[#25D366] hover:bg-[#1FB855] disabled:opacity-50"
+              title="Sends the invoice PDF itself to the client on WhatsApp"
             >
-              Send Invoice on WhatsApp
+              {waBusy ? "Preparing…" : "Send Invoice PDF on WhatsApp"}
             </button>
           </div>
         </div>
@@ -252,6 +271,12 @@ export default function BookingDetailPage() {
         {waError && (
           <div className="text-[12px] font-semibold text-rose bg-rose-light rounded-lg px-3 py-2 mt-2">
             {waError}
+          </div>
+        )}
+
+        {waNotice && (
+          <div className="text-[12px] text-[#6B5320] bg-gold-light border border-gold/30 rounded-lg px-3 py-2 mt-2">
+            {waNotice}
           </div>
         )}
 
