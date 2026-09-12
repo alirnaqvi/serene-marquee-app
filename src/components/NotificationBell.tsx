@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, PartyPopper, Ban, ShieldAlert, BadgeCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { clientName } from "@/types";
+import { useSession } from "@/components/SessionContext";
+import { canDecideRequest, clientName } from "@/types";
 import { fmtDMYTime } from "@/lib/dateFormat";
 import type { Booking } from "@/types";
 
@@ -27,6 +28,9 @@ type Notice = {
 export default function NotificationBell() {
   const supabase = createClient();
   const router = useRouter();
+  const { role } = useSession();
+  const roleRef = useRef(role);
+  roleRef.current = role;
   const [notices, setNotices] = useState<Notice[]>([]);
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -99,7 +103,10 @@ export default function NotificationBell() {
         async (payload) => {
           const r = payload.new as any;
           const { data: { user } } = await supabase.auth.getUser();
-          if (!user || r.requested_by === user.id) return; // don't notify the requester of their own request
+          // Only tell people who can actually decide it. RLS should already
+          // keep the row away from anyone else, but a request must never ping
+          // the person who raised it or someone of the same rank.
+          if (!user || !canDecideRequest(roleRef.current, user.id, r)) return;
           pushNotice({
             id: `${r.id}-req-${Date.now()}`,
             bookingId: null,

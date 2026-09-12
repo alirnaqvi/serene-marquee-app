@@ -33,7 +33,7 @@ export default function AlertModal({
             &times;
           </button>
         </div>
-        <div className="px-5 py-4 text-[13.5px] text-ink leading-relaxed">{message}</div>
+        <div className="px-5 py-4 text-[13.5px] text-ink leading-relaxed whitespace-pre-line">{message}</div>
         <div className="px-5 py-3.5 border-t border-border flex justify-end gap-2">
           <button onClick={onClose} className="btn-ghost rounded-lg px-4 py-2 text-sm">
             Close

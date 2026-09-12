@@ -15,14 +15,28 @@ export type Menu = {
   items: string;
 };
 
-// Every add-on is priced PER HEAD — quantity always follows the guaranteed
-// guest count. default_qty_mode is retained so old rows still parse, but it is
-// no longer read anywhere: treat every item as per head.
+/**
+ * An item on the full menu list.
+ *
+ * Almost everything here is covered by the single agreed per-head rate, so it
+ * carries no rate of its own: it is picked, and the quantity simply follows the
+ * guest count.
+ *
+ * A PRICED item is the exception. Lamb Roast is the reason it exists — a whole
+ * roast is far too expensive to disappear inside a per-head figure, so it is
+ * charged by the piece at its own rate, on top of the per-head total. Set
+ * `priced` true, give it a `price` and a `unit_label` ("lamb", "leg piece"),
+ * and the booking form asks for a quantity instead of assuming the guest count.
+ */
 export type AddonItem = {
   id: string;
   category: string;
   name: string;
   price: number;
+  /** true = charged by the piece at `price`, on top of the per-head rate. */
+  priced?: boolean;
+  /** What one unit is called: "lamb", "leg piece". Only used when priced. */
+  unit_label?: string | null;
   default_qty_mode?: "guests" | "one";
   sort_order: number;
 };
@@ -32,9 +46,12 @@ export type BookingAddon = {
   booking_id: string;
   addon_item_id: string | null;
   name: string;
+  /** Rs. per unit. Zero for ordinary items covered by the per-head rate. */
   unit_price: number;
   quantity: number;
+  /** unit_price x quantity. Zero for ordinary items. */
   line_total: number;
+  unit_label?: string | null;
 };
 
 export type Role = "owner" | "admin" | "manager" | "general_manager" | "developer" | "staff";
@@ -115,8 +132,35 @@ export const DISCOUNT_APPROVERS: Record<Role, Role[]> = {
   owner: [],     // monitor only
 };
 
+/**
+ * Who a request from `role` goes to. Never includes the requester's own role —
+ * nobody is their own approver, whatever a stored row happens to say.
+ */
 export function approversFor(role: Role): Role[] {
-  return DISCOUNT_APPROVERS[role] ?? [];
+  return (DISCOUNT_APPROVERS[role] ?? []).filter((r) => r !== role);
+}
+
+/**
+ * True when this person is one of the people a request was addressed to.
+ * Their own requests never count, even if their role appears in the list.
+ */
+export function canDecideRequest(
+  myRole: Role,
+  myId: string,
+  req: { approver_roles: Role[]; requested_by: string; requester_role: Role }
+): boolean {
+  if (req.requested_by === myId) return false;
+  if (myRole === req.requester_role) return false;
+  return (req.approver_roles || []).includes(myRole);
+}
+
+/**
+ * A role read from the database that isn't one we know about must not be
+ * treated as an unlimited account, and must not silently become a zero-limit
+ * one either — it is a data problem, and this is where it surfaces.
+ */
+export function isKnownRole(role: string): role is Role {
+  return Object.prototype.hasOwnProperty.call(DISCOUNT_LIMITS, role);
 }
 
 export type ApprovalStatus = "pending" | "approved" | "rejected";
@@ -214,6 +258,11 @@ export type Booking = {
   menu_id: string | null;
   is_custom_menu: boolean;
   per_head_rate: number; // final per-head rate entered manually, covers menu + any extra items
+  // Sum of the priced extras (Lamb Roast, etc.) on this booking. Kept on the
+  // booking itself so every list, export and total is right without having to
+  // join booking_addons, and so a later rate change never rewrites a total that
+  // was already agreed and signed.
+  extras_total: number;
   removed_menu_items: string[] | null; // items unchecked from the selected offered menu's included list
   discount: number; // flat Rs. amount (not a percentage)
   reference: string | null;

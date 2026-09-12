@@ -9,6 +9,7 @@ import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/sett
 import { fmtDMY } from "@/lib/dateFormat";
 import { useSession } from "@/components/SessionContext";
 import { downloadXlsx, monthName, currentMonth, recentMonths, monthBounds, type SheetColumn } from "@/lib/xlsx";
+import AlertModal from "@/components/AlertModal";
 import { bookingRef, clientName } from "@/types";
 import type { Booking, Venue, Menu } from "@/types";
 
@@ -75,6 +76,10 @@ export default function BookingsPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | "Confirmed" | "Tentative" | "Cancelled" | "Draft">(
     (searchParams.get("status") as any) || "all"
   );
+  // Draft being discarded, held here so the confirmation can name it.
+  const [discarding, setDiscarding] = useState<Booking | null>(null);
+  const [discardBusy, setDiscardBusy] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -160,6 +165,44 @@ export default function BookingsPage() {
     return acc;
   }, [rows, venues, menus, settings]);
 
+  /**
+   * Throw a draft away for good.
+   *
+   * Only a Draft is ever deleted — a real booking is Cancelled instead, which
+   * keeps the record. The database refuses anything else, and if it refuses
+   * this one (someone else's draft, a read-only account) the row comes back
+   * untouched and the reason is shown rather than the list silently pretending
+   * it worked.
+   */
+  async function handleDiscard() {
+    if (!discarding) return;
+    setDiscardBusy(true);
+    setDiscardError(null);
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .delete()
+      .eq("id", discarding.id)
+      .eq("status", "Draft")
+      .select("id");
+
+    setDiscardBusy(false);
+
+    if (error) {
+      setDiscardError(error.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      setDiscardError(
+        "The database refused to delete this draft. It may belong to someone else, or your account may be view-only."
+      );
+      return;
+    }
+
+    setBookings((prev) => prev.filter((b) => b.id !== discarding.id));
+    setDiscarding(null);
+  }
+
   function setMonthRange(month: string) {
     const { from, to } = monthBounds(month);
     setDateFrom(from);
@@ -188,7 +231,7 @@ export default function BookingsPage() {
     { header: "Food Subtotal", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).foodSubtotal), money: true },
     { header: "Discount", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).discountAmount), money: true },
     { header: "Grand Total", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).grandTotal), money: true },
-    { header: "Advance", value: (b) => Math.round(b.advance), money: true },
+    { header: "Payment Received", value: (b) => Math.round(b.advance), money: true },
     { header: "Refunded", value: (b) => Math.round(b.advance_refunded ? b.refund_amount : 0), money: true },
     { header: "Balance", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).balance), money: true },
     { header: "Status", value: (b) => b.status },
@@ -349,7 +392,7 @@ export default function BookingsPage() {
       </div>
 
       <div className="card">
-        <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[560px] text-[13px]">
+        <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[680px] text-[13px]">
           <thead>
             <tr className="text-left text-muted text-[11px] uppercase tracking-wide border-b border-border">
               <th className="py-2 px-2">Ref</th>
@@ -359,6 +402,7 @@ export default function BookingsPage() {
               <th className="py-2 px-2">Function</th>
               <th className="py-2 px-2">Guests</th>
               <th className="py-2 px-2">Grand Total</th>
+              <th className="py-2 px-2">Payment Received</th>
               <th className="py-2 px-2">Balance</th>
               <th className="py-2 px-2">Status</th>
               <th className="py-2 px-2"></th>
@@ -367,7 +411,7 @@ export default function BookingsPage() {
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="text-center py-8 text-muted text-sm">
+                <td colSpan={11} className="text-center py-8 text-muted text-sm">
                   No bookings match your search
                 </td>
               </tr>
@@ -391,6 +435,21 @@ export default function BookingsPage() {
                   <td className="py-2.5 px-2">{functionLabel(b)}</td>
                   <td className="py-2.5 px-2">{b.guests}</td>
                   <td className="py-2.5 px-2">{money(t.grandTotal)}</td>
+                  <td className="py-2.5 px-2 whitespace-nowrap">
+                    {/* What the client has actually paid in against this
+                        booking. A refunded advance is money that went back
+                        out, so it is shown as nil received with the refund
+                        noted underneath rather than quietly left standing. */}
+                    <span className={b.advance > 0 && !b.advance_refunded ? "text-gold-deep font-semibold" : "text-muted"}>
+                      {money(b.advance_refunded ? 0 : b.advance)}
+                    </span>
+                    {b.advance_refunded && (
+                      <>
+                        <br />
+                        <span className="text-[10.5px] text-muted">{money(b.refund_amount)} refunded</span>
+                      </>
+                    )}
+                  </td>
                   <td className={`py-2.5 px-2 ${t.balance > 0 ? "text-rose" : "text-gold-deep"}`}>
                     {money(t.balance)}
                   </td>
@@ -398,12 +457,26 @@ export default function BookingsPage() {
                   <td className="py-2.5 px-2">
                     {/* A draft has nothing to show yet — resuming it means
                         reopening the form where it was left. */}
-                    <Link
-                      href={b.status === "Draft" ? `/bookings/${b.id}/edit` : `/bookings/${b.id}`}
-                      className="btn-ghost rounded-md px-2.5 py-1 text-xs inline-block whitespace-nowrap"
-                    >
-                      {b.status === "Draft" ? "Resume" : "Open"}
-                    </Link>
+                    <div className="flex gap-1.5 items-center justify-end">
+                      <Link
+                        href={b.status === "Draft" ? `/bookings/${b.id}/edit` : `/bookings/${b.id}`}
+                        className="btn-ghost rounded-md px-2.5 py-1 text-xs inline-block whitespace-nowrap"
+                      >
+                        {b.status === "Draft" ? "Resume" : "Open"}
+                      </Link>
+                      {b.status === "Draft" && !readOnly && (
+                        <button
+                          onClick={() => {
+                            setDiscardError(null);
+                            setDiscarding(b);
+                          }}
+                          className="text-xs font-semibold text-rose border border-rose/30 rounded-md px-2.5 py-1 hover:bg-rose-light whitespace-nowrap"
+                          title="Delete this unfinished draft"
+                        >
+                          Discard
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -411,6 +484,24 @@ export default function BookingsPage() {
           </tbody>
         </table></div>
       </div>
+
+      {discarding && (
+        <AlertModal
+          title="Discard this draft?"
+          message={`${
+            discarding.client.trim() || "This unfinished form"
+          } will be deleted permanently. Drafts hold no date and block no venue, so nothing else is affected — but this cannot be undone.${
+            discardError ? `\n\n${discardError}` : ""
+          }`}
+          tone="danger"
+          confirmLabel={discardBusy ? "Discarding…" : "Discard Draft"}
+          onConfirm={handleDiscard}
+          onClose={() => {
+            setDiscarding(null);
+            setDiscardError(null);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -7,7 +7,11 @@ import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { FUNCTION_TYPES, CLIENT_TITLES, clientName, canConfirmBooking, type ClientTitle } from "@/types";
 import type { Venue, Menu, Booking, AddonItem } from "@/types";
-import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
+import CustomMenuModal, {
+  type CustomSelection,
+  resyncGuestQuantities,
+  extrasTotalOf,
+} from "@/components/CustomMenuModal";
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
 import DiscountField from "@/components/DiscountField";
@@ -50,6 +54,8 @@ export default function NewBookingPage() {
   const [draftNumber, setDraftNumber] = useState<number | null>(null);
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
   const draftIdRef = useRef<string | null>(null);
 
   const presetVenue = searchParams.get("venue") || "";
@@ -176,12 +182,19 @@ export default function NewBookingPage() {
     setConflictAlert(conflicts.length > 0 ? conflictMessage() : null);
   }, [date, session, selectedVenues.join(","), existingBookings.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Priced extras (Lamb Roast) are charged by the piece on top of the agreed
+  // per-head rate, so they are totalled here and carried through to the
+  // booking row rather than being folded into the per-head figure.
+  const activeSelection = isCustomMenu ? customSelection : addOnSelection;
+  const extrasTotal = isEntryTest ? 0 : extrasTotalOf(activeSelection);
+
   const totals = calcTotals(
     {
       guests: n(guests),
       venues: selectedVenues,
       isEntryTest,
       perHeadRate: n(perHeadRate),
+      extrasTotal,
       discount: n(discount),
       decoration: n(decoration),
       heaters: n(heaters),
@@ -216,6 +229,7 @@ export default function NewBookingPage() {
       menu_id: isEntryTest || isCustomMenu ? null : menuId || null,
       is_custom_menu: isCustomMenu,
       per_head_rate: isEntryTest ? 0 : n(perHeadRate),
+      extras_total: extrasTotal,
       removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
       discount: n(discount),
       reference,
@@ -270,6 +284,7 @@ export default function NewBookingPage() {
       readOnly, selectedVenues, session, date, title, client, phone, phone2, cnic, email,
       functionType, functionTypeOther, entryTestType, guests, menuId, isCustomMenu, isEntryTest,
       perHeadRate, removedMenuItems, discount, reference, decoration, heaters, cooling, advance, notes,
+      extrasTotal,
     ]
   );
 
@@ -280,6 +295,45 @@ export default function NewBookingPage() {
     const t = setTimeout(() => saveDraft(), 2500);
     return () => clearTimeout(t);
   }, [saveDraft, draftWorthKeeping, readOnly]);
+
+  /**
+   * Leave without keeping anything.
+   *
+   * The form parks itself as a draft while you type, so walking away used to
+   * leave that row behind for good — the list filled up with half-finished
+   * bookings nobody could get rid of. Discarding now deletes the draft row and
+   * its items, and says so if the database refuses rather than pretending.
+   */
+  async function discardDraft() {
+    const id = draftIdRef.current;
+    if (!id) {
+      router.push("/bookings");
+      return;
+    }
+    setDiscardError(null);
+    await supabase.from("booking_addons").delete().eq("booking_id", id);
+    const { data, error: err } = await supabase
+      .from("bookings")
+      .delete()
+      .eq("id", id)
+      .eq("status", "Draft")
+      .select("id");
+
+    if (err) {
+      setDiscardError(err.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      setDiscardError(
+        "The database refused to delete this draft. Run migration 2026-16, which adds the delete rule that was missing."
+      );
+      return;
+    }
+    draftIdRef.current = null;
+    setDraftId(null);
+    setConfirmDiscard(false);
+    router.push("/bookings");
+  }
 
   async function handleSave() {
     setError(null);
@@ -340,16 +394,20 @@ export default function NewBookingPage() {
       await supabase.from("booking_addons").delete().eq("booking_id", draftIdRef.current);
     }
 
-    const activeSelection = isCustomMenu ? customSelection : addOnSelection;
     if (inserted && activeSelection.length > 0) {
       await supabase.from("booking_addons").insert(
         activeSelection.map((c) => ({
           booking_id: inserted.id,
           addon_item_id: c.addon_item_id,
           name: c.name,
-          unit_price: 0,
+          // Ordinary items carry no rate — the agreed per-head figure covers
+          // them. A priced item (Lamb Roast) stores what it was actually
+          // charged at, frozen, so a later price change never rewrites a
+          // booking that has already been agreed.
+          unit_price: c.unit_price,
           quantity: c.quantity,
-          line_total: 0,
+          line_total: c.line_total,
+          unit_label: c.unit_label ?? null,
         }))
       );
     }
@@ -722,9 +780,27 @@ export default function NewBookingPage() {
               : `Food Subtotal (${n(guests)} × ${money(n(perHeadRate))}/head)`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(totals.foodSubtotal)}</div>
+          {totals.extrasTotal > 0 && (
+            <>
+              <div className="text-gold-deep opacity-85">Priced Extras (per piece)</div>
+              <div className="text-right font-bold text-gold-deep">+ {money(totals.extrasTotal)}</div>
+            </>
+          )}
           <div className="text-gold-deep opacity-85">KPRA Tax ({+(settings.kpraRate * 100).toFixed(2)}%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.kprTax)}</div>
-          <div className="text-gold-deep opacity-85">Hall Charge{selectedVenues.length > 1 ? " (both halls)" : ""}</div>
+          <div className="text-gold-deep opacity-85">
+            Hall Charge
+            {selectedVenues.length > 1 ? " (both halls)" : ""}
+            {totals.hallWaiverThreshold > 0 && (
+              <span className="block text-[10.5px] opacity-70">
+                {totals.hallWaived
+                  ? `Waived — ${n(guests)} guests is at or above ${totals.hallWaiverThreshold}`
+                  : `Waived at ${totals.hallWaiverThreshold}+ guests${
+                      selectedVenues.length > 1 ? " for two halls" : ""
+                    }`}
+              </span>
+            )}
+          </div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.hallCharge)}</div>
           <div className="text-gold-deep opacity-85">Decoration</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.decoration)}</div>
@@ -754,8 +830,11 @@ export default function NewBookingPage() {
               close this and pick it up from Bookings.
             </div>
           )}
-          <button onClick={() => router.back()} className="btn-ghost rounded-lg px-4 py-2 text-sm">
-            Cancel
+          <button
+            onClick={() => (draftIdRef.current ? setConfirmDiscard(true) : router.back())}
+            className="btn-ghost rounded-lg px-4 py-2 text-sm"
+          >
+            {draftIdRef.current ? "Discard" : "Cancel"}
           </button>
           <button
             onClick={async () => {
@@ -805,6 +884,22 @@ export default function NewBookingPage() {
           onConfirm={(selection) => {
             setAddOnSelection(selection);
             setShowAddOnsModal(false);
+          }}
+        />
+      )}
+
+      {confirmDiscard && (
+        <AlertModal
+          title="Discard this form?"
+          message={`Everything typed in so far will be deleted, including the draft that was saved automatically while you worked. Nothing else is affected — a draft holds no date and blocks no venue.${
+            discardError ? `\n\n${discardError}` : ""
+          }`}
+          tone="danger"
+          confirmLabel="Discard"
+          onConfirm={discardDraft}
+          onClose={() => {
+            setConfirmDiscard(false);
+            setDiscardError(null);
           }}
         />
       )}

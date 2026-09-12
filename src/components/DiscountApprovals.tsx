@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { money } from "@/lib/calculations";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { useSession } from "@/components/SessionContext";
-import { ROLE_LABELS, discountLimitFor, type DiscountApproval } from "@/types";
+import { ROLE_LABELS, canDecideRequest, discountLimitFor, type DiscountApproval } from "@/types";
 import Link from "next/link";
 
 /**
@@ -74,7 +74,15 @@ export default function DiscountApprovals() {
     if (err) return;
 
     const rows = (data as DiscountApproval[]) || [];
-    setIncoming(rows.filter((r) => r.status === "pending" && r.requested_by !== user.id));
+    // Only requests this person is actually entitled to decide. A request can
+    // never be decided by whoever raised it, or by anyone of the same rank —
+    // the General Manager who found his own request waiting in his inbox was
+    // the symptom of that check being missing here and in the database.
+    setIncoming(
+      rows.filter(
+        (r) => r.status === "pending" && canDecideRequest(role, user.id, r)
+      )
+    );
     setMine(
       rows.filter(
         (r) =>

@@ -9,6 +9,7 @@ import { SESSION_TIMES } from "@/lib/constants";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { generateDocumentPdf } from "@/lib/generateAgreementPdf";
+import { toWhatsAppNumber, invoiceMessage, whatsAppLink } from "@/lib/whatsapp";
 import AlertModal from "@/components/AlertModal";
 import { useSession } from "@/components/SessionContext";
 import { bookingRef, clientName } from "@/types";
@@ -27,6 +28,7 @@ export default function BookingDetailPage() {
   const [settings, setSettings] = useState<ChargeSettings>(DEFAULT_SETTINGS);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [waError, setWaError] = useState<string | null>(null);
 
   // Advance refund (only offered once a booking is cancelled)
   const [showRefund, setShowRefund] = useState(false);
@@ -79,6 +81,27 @@ export default function BookingDetailPage() {
       /* PDF still generates without the logo if this fails */
     }
     generateDocumentPdf(booking!, venues, menus, addons, docType, logoDataUri, settings);
+  }
+
+  /**
+   * Send the client their invoice on WhatsApp.
+   *
+   * WhatsApp's click-to-chat link carries text but cannot carry a file, so this
+   * does both halves of the job: the PDF is downloaded first, then the chat
+   * opens with the full invoice already written out as a message. The client
+   * has the figures in the chat either way; the attachment is one tap in
+   * WhatsApp itself.
+   */
+  async function handleSendWhatsApp(docType: "Invoice" | "Quotation" | "Agreement" = "Invoice") {
+    setWaError(null);
+    const wa = toWhatsAppNumber(booking!.phone) || toWhatsAppNumber(booking!.phone2);
+    if (!wa) {
+      setWaError("No usable phone number on this booking — add one under Edit first.");
+      return;
+    }
+    await handleDownloadPdf(docType);
+    const text = invoiceMessage(booking!, venues, menus, docType, settings);
+    window.open(whatsAppLink(wa, text), "_blank", "noopener,noreferrer");
   }
 
   async function handleCancel() {
@@ -216,8 +239,21 @@ export default function BookingDetailPage() {
             <button onClick={() => handleDownloadPdf("Agreement")} className="btn-primary rounded-lg px-4 py-2 text-sm whitespace-nowrap">
               Agreement PDF
             </button>
+            <button
+              onClick={() => handleSendWhatsApp("Invoice")}
+              className="rounded-lg px-4 py-2 text-sm whitespace-nowrap font-semibold text-white bg-[#25D366] hover:bg-[#1FB855]"
+              title="Downloads the invoice PDF and opens WhatsApp with the details written out"
+            >
+              Send Invoice on WhatsApp
+            </button>
           </div>
         </div>
+
+        {waError && (
+          <div className="text-[12px] font-semibold text-rose bg-rose-light rounded-lg px-3 py-2 mt-2">
+            {waError}
+          </div>
+        )}
 
         <div className="mt-4 divide-y divide-dashed divide-border text-[13px]">
           <Row k="Host / Organization" v={clientName(booking)} />
@@ -260,7 +296,13 @@ export default function BookingDetailPage() {
                 {addons.map((a) => (
                   <tr key={a.id} className="border-b border-border last:border-0">
                     <td className="py-1.5">{a.name}</td>
-                    <td className="py-1.5 text-muted text-right">× {a.quantity}</td>
+                    <td className="py-1.5 text-muted text-right">
+                      × {a.quantity}
+                      {a.unit_label ? ` ${a.unit_label}${a.quantity === 1 ? "" : "s"}` : ""}
+                    </td>
+                    <td className="py-1.5 text-right font-semibold whitespace-nowrap">
+                      {a.line_total > 0 ? money(a.line_total) : <span className="text-muted font-normal">in per-head rate</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -278,10 +320,23 @@ export default function BookingDetailPage() {
               : `Food Subtotal (${booking.guests} × ${money(booking.per_head_rate)}/head)`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(t.foodSubtotal)}</div>
-          <div className="text-gold-deep opacity-85">KPRA Tax (15%)</div>
+          {t.extrasTotal > 0 && (
+            <>
+              <div className="text-gold-deep opacity-85">Priced Extras (per piece)</div>
+              <div className="text-right font-bold text-gold-deep">+ {money(t.extrasTotal)}</div>
+            </>
+          )}
+          <div className="text-gold-deep opacity-85">
+            KPRA Tax ({+(settings.kpraRate * 100).toFixed(2)}%)
+          </div>
           <div className="text-right font-bold text-gold-deep">+ {money(t.kprTax)}</div>
           <div className="text-gold-deep opacity-85">
-            Hall Charge{t.hallCharge ? (venueList.length > 1 ? " (both halls)" : "") : " (waived — 200+ guests)"}
+            Hall Charge
+            {t.hallCharge
+              ? venueList.length > 1
+                ? ` (both halls — waived at ${t.hallWaiverThreshold}+ guests)`
+                : ""
+              : ` (waived — ${t.hallWaiverThreshold}+ guests)`}
           </div>
           <div className="text-right font-bold text-gold-deep">+ {money(t.hallCharge)}</div>
           <div className="text-gold-deep opacity-85">Decoration</div>

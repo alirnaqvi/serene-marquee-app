@@ -6,6 +6,10 @@ export type ChargeInput = {
   venues: string[]; // venue ids
   isEntryTest?: boolean; // Entry Test bookings: flat per-head rate, no menu involved
   perHeadRate?: number; // final per-head rate entered manually, covers menu + any extra items
+  // Priced extras (Lamb Roast, etc.) — items that carry a real rate of their
+  // own and are NOT covered by the agreed per-head rate. Charged by the piece,
+  // not by the guest count.
+  extrasTotal?: number;
   discount: number; // flat Rs. amount (not a percentage)
   decoration: number;
   heaters: number;
@@ -15,8 +19,12 @@ export type ChargeInput = {
 
 export type ChargeBreakdown = {
   foodSubtotal: number;
+  extrasTotal: number; // priced extras (Lamb Roast, etc.), charged by the piece
   kprTax: number;
   hallCharge: number;
+  /** Guest count at which the hall charge is waived for the selected venue(s). */
+  hallWaiverThreshold: number;
+  hallWaived: boolean;
   coolingCharge: number;
   heatingCharge: number;
   decoration: number;
@@ -25,6 +33,30 @@ export type ChargeBreakdown = {
   grandTotal: number; // totalBeforeDiscount - discountAmount
   balance: number; // grandTotal - advance
 };
+
+/**
+ * HALL CHARGE WAIVER
+ *
+ * Each venue carries its own waiver minimum (Serene Diamond and Serene Gold are
+ * both 200). One hall is waived at that hall's own minimum. When two halls are
+ * taken the function has to be big enough to fill both before the charge goes,
+ * so the minimums ADD UP — 200 + 200 = 400 guests for Diamond + Gold together.
+ *
+ * The waiver is all-or-nothing across the selected halls: below the combined
+ * minimum every hall is charged, at or above it every hall is free. The figures
+ * come from the venues table, so the Admin changing a minimum on Menus & Venues
+ * moves this rule with it.
+ */
+export function hallChargeFor(
+  guests: number,
+  venueList: Venue[]
+): { charge: number; threshold: number; waived: boolean } {
+  if (venueList.length === 0) return { charge: 0, threshold: 0, waived: false };
+  const threshold = venueList.reduce((sum, v) => sum + v.min_waiver, 0);
+  const full = venueList.reduce((sum, v) => sum + v.hall_charge, 0);
+  const waived = guests >= threshold;
+  return { charge: waived ? 0 : full, threshold, waived };
+}
 
 export function calcTotals(
   input: ChargeInput,
@@ -53,19 +85,17 @@ export function calcTotals(
   // applied only once, at the very end, to the fully totaled amount
   // (Food + KPRA + Hall + Decoration + Cooling/Heating), per owner policy.
   // It is a flat Rs. amount, not a percentage.
-  const kprTax = foodSubtotal * settings.kpraRate;
+  const extrasTotal = input.isEntryTest ? 0 : input.extrasTotal || 0;
+  const kprTax = (foodSubtotal + extrasTotal) * settings.kpraRate;
 
-  // Hall charge is waived once guest count reaches each selected venue's
-  // minimum (currently 200+ across all three venues, per owner policy).
-  const hallCharge = venueList.reduce(
-    (sum, v) => sum + (input.guests < v.min_waiver ? v.hall_charge : 0),
-    0
-  );
+  const hall = hallChargeFor(input.guests, venueList);
+  const hallCharge = hall.charge;
   const coolingCharge = input.cooling ? settings.coolingCharge * venueList.length : 0;
   const heatingCharge = (input.heaters || 0) * settings.heaterCharge;
   const decoration = input.decoration || 0;
 
-  const totalBeforeDiscount = foodSubtotal + kprTax + hallCharge + coolingCharge + heatingCharge + decoration;
+  const totalBeforeDiscount =
+    foodSubtotal + extrasTotal + kprTax + hallCharge + coolingCharge + heatingCharge + decoration;
   // The discount (flat Rs., capped so it can't exceed the total) is deducted
   // once from that grand total.
   const discountAmount = Math.min(input.discount || 0, totalBeforeDiscount);
@@ -74,8 +104,11 @@ export function calcTotals(
 
   return {
     foodSubtotal,
+    extrasTotal,
     kprTax,
     hallCharge,
+    hallWaiverThreshold: hall.threshold,
+    hallWaived: hall.waived,
     coolingCharge,
     heatingCharge,
     decoration,
@@ -92,6 +125,7 @@ export function chargesFromBooking(
     | "guests"
     | "venues"
     | "per_head_rate"
+    | "extras_total"
     | "function_type"
     | "discount"
     | "decoration"
@@ -109,6 +143,7 @@ export function chargesFromBooking(
       venues: booking.venues,
       isEntryTest: booking.function_type === "Entry Test",
       perHeadRate: booking.per_head_rate,
+      extrasTotal: booking.extras_total,
       discount: booking.discount,
       decoration: booking.decoration,
       heaters: booking.heaters,

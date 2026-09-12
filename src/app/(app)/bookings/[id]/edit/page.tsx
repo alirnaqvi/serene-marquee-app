@@ -7,7 +7,11 @@ import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { FUNCTION_TYPES, CLIENT_TITLES, clientName, canConfirmBooking, statusForAdvance } from "@/types";
 import type { Venue, Menu, Booking, AddonItem, ClientTitle } from "@/types";
-import CustomMenuModal, { type CustomSelection, resyncGuestQuantities } from "@/components/CustomMenuModal";
+import CustomMenuModal, {
+  type CustomSelection,
+  resyncGuestQuantities,
+  extrasTotalOf,
+} from "@/components/CustomMenuModal";
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
 import DiscountField from "@/components/DiscountField";
@@ -41,6 +45,9 @@ export default function EditBookingPage() {
   const [originalDate, setOriginalDate] = useState("");
   const [settings, setSettings] = useState<ChargeSettings>(DEFAULT_SETTINGS);
   const [draftSaving, setDraftSaving] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [discardBusy, setDiscardBusy] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
 
   const [selectedVenues, setSelectedVenues] = useState<string[]>([]);
   const [session, setSession] = useState<"Lunch" | "Dinner">("Lunch");
@@ -132,6 +139,9 @@ export default function EditBookingPage() {
           addon_item_id: ba.addon_item_id || "",
           name: ba.name,
           quantity: ba.quantity,
+          unit_price: ba.unit_price || 0,
+          line_total: ba.line_total || 0,
+          unit_label: ba.unit_label ?? null,
         }));
         if (booking.is_custom_menu) setCustomSelection(selection);
         else setAddOnSelection(selection);
@@ -202,12 +212,18 @@ export default function EditBookingPage() {
     setConflictAlert(conflicts.length > 0 ? conflictMessage() : null);
   }, [date, session, selectedVenues.join(","), existingBookings.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Priced extras (Lamb Roast) are charged by the piece on top of the agreed
+  // per-head rate.
+  const activeSelectionNow = isCustomMenu ? customSelection : addOnSelection;
+  const extrasTotal = isEntryTest ? 0 : extrasTotalOf(activeSelectionNow);
+
   const totals = calcTotals(
     {
       guests: n(guests),
       venues: selectedVenues,
       isEntryTest,
       perHeadRate: n(perHeadRate),
+      extrasTotal,
       discount: n(discount),
       decoration: n(decoration),
       heaters: n(heaters),
@@ -266,6 +282,7 @@ export default function EditBookingPage() {
         menu_id: isEntryTest || isCustomMenu ? null : menuId || null,
         is_custom_menu: isCustomMenu,
         per_head_rate: isEntryTest ? 0 : n(perHeadRate),
+        extras_total: extrasTotal,
         removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
         discount: n(discount),
         reference,
@@ -280,6 +297,31 @@ export default function EditBookingPage() {
     setDraftSaving(false);
     if (err) return setError(err.message);
     router.push("/bookings?status=Draft");
+  }
+
+  /**
+   * Throw a resumed draft away instead of finishing it. Offered only while the
+   * booking is still a Draft — a real booking is Cancelled, never deleted.
+   */
+  async function discardDraft() {
+    setDiscardBusy(true);
+    setDiscardError(null);
+    await supabase.from("booking_addons").delete().eq("booking_id", bookingId);
+    const { data, error: err } = await supabase
+      .from("bookings")
+      .delete()
+      .eq("id", bookingId)
+      .eq("status", "Draft")
+      .select("id");
+    setDiscardBusy(false);
+
+    if (err) return setDiscardError(err.message);
+    if (!data || data.length === 0) {
+      return setDiscardError(
+        "The database refused to delete this draft. Run migration 2026-16, which adds the delete rule that was missing."
+      );
+    }
+    router.push("/bookings");
   }
 
   async function handleSave() {
@@ -333,6 +375,7 @@ export default function EditBookingPage() {
         menu_id: isEntryTest || isCustomMenu ? null : menuId,
         is_custom_menu: isCustomMenu,
         per_head_rate: isEntryTest ? 0 : n(perHeadRate),
+        extras_total: extrasTotal,
         removed_menu_items: isEntryTest || isCustomMenu ? [] : removedMenuItems,
         discount: n(discount),
         reference,
@@ -361,9 +404,10 @@ export default function EditBookingPage() {
           booking_id: bookingId,
           addon_item_id: c.addon_item_id,
           name: c.name,
-          unit_price: 0,
+          unit_price: c.unit_price,
           quantity: c.quantity,
-          line_total: 0,
+          line_total: c.line_total,
+          unit_label: c.unit_label ?? null,
         }))
       );
     }
@@ -707,9 +751,27 @@ export default function EditBookingPage() {
               : `Food Subtotal (${n(guests)} × ${money(n(perHeadRate))}/head)`}
           </div>
           <div className="text-right font-bold text-gold-deep">{money(totals.foodSubtotal)}</div>
+          {totals.extrasTotal > 0 && (
+            <>
+              <div className="text-gold-deep opacity-85">Priced Extras (per piece)</div>
+              <div className="text-right font-bold text-gold-deep">+ {money(totals.extrasTotal)}</div>
+            </>
+          )}
           <div className="text-gold-deep opacity-85">KPRA Tax ({+(settings.kpraRate * 100).toFixed(2)}%)</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.kprTax)}</div>
-          <div className="text-gold-deep opacity-85">Hall Charge{selectedVenues.length > 1 ? " (both halls)" : ""}</div>
+          <div className="text-gold-deep opacity-85">
+            Hall Charge
+            {selectedVenues.length > 1 ? " (both halls)" : ""}
+            {totals.hallWaiverThreshold > 0 && (
+              <span className="block text-[10.5px] opacity-70">
+                {totals.hallWaived
+                  ? `Waived — ${n(guests)} guests is at or above ${totals.hallWaiverThreshold}`
+                  : `Waived at ${totals.hallWaiverThreshold}+ guests${
+                      selectedVenues.length > 1 ? " for two halls" : ""
+                    }`}
+              </span>
+            )}
+          </div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.hallCharge)}</div>
           <div className="text-gold-deep opacity-85">Decoration</div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.decoration)}</div>
@@ -735,6 +797,18 @@ export default function EditBookingPage() {
           <button onClick={() => router.back()} className="btn-ghost rounded-lg px-4 py-2 text-sm">
             Discard Changes
           </button>
+          {isDraft && (
+            <button
+              onClick={() => {
+                setDiscardError(null);
+                setConfirmDiscard(true);
+              }}
+              className="text-sm font-semibold text-rose border border-rose/30 rounded-lg px-4 py-2 hover:bg-rose-light"
+              title="Delete this unfinished draft"
+            >
+              Discard Draft
+            </button>
+          )}
           {isDraft && (
             <button
               onClick={keepAsDraft}
@@ -781,6 +855,24 @@ export default function EditBookingPage() {
           onConfirm={(selection) => {
             setAddOnSelection(selection);
             setShowAddOnsModal(false);
+          }}
+        />
+      )}
+
+      {confirmDiscard && (
+        <AlertModal
+          title="Discard this draft?"
+          message={`${
+            client.trim() || "This unfinished form"
+          } will be deleted permanently. A draft holds no date and blocks no venue, so nothing else is affected — but this cannot be undone.${
+            discardError ? `\n\n${discardError}` : ""
+          }`}
+          tone="danger"
+          confirmLabel={discardBusy ? "Discarding…" : "Discard Draft"}
+          onConfirm={discardDraft}
+          onClose={() => {
+            setConfirmDiscard(false);
+            setDiscardError(null);
           }}
         />
       )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Trash2, X, Check } from "lucide-react";
+import { Pencil, Plus, Trash2, X, Check, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { money, parseMenuItems } from "@/lib/calculations";
 import { formatSetting, type AppSetting } from "@/lib/settings";
@@ -77,6 +77,15 @@ export default function MenusEditor({
   // Which row is currently open for editing, keyed by "kind:id".
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<any>({});
+
+  // One search box across the whole page. The add-on list alone runs past a
+  // hundred items, so finding "Lamb Roast" or checking what Reception Menu 2
+  // includes meant scrolling the lot. Typing narrows menus, venues and items
+  // together, and a section with nothing left in it drops out of the way.
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const matches = (...fields: (string | null | undefined)[]) =>
+    !q || fields.some((f) => (f || "").toLowerCase().includes(q));
 
   const reload = useCallback(async () => {
     const [{ data: m }, { data: v }, { data: a }, { data: s }] = await Promise.all([
@@ -183,13 +192,29 @@ export default function MenusEditor({
     );
     if (ok) {
       setEditing(`addon:${id}`);
-      setDraft({ name: "New item" });
+      setDraft({ name: "New item", price: 0, priced: false, unit_label: "" });
     }
   }
 
+  /**
+   * An item is normally covered by the booking's single agreed per-head rate,
+   * so it carries no figure of its own. Ticking "charged by the piece" is the
+   * exception — Lamb Roast — and then the rate and the unit ("lamb", "leg
+   * piece") both matter, because the booking form asks for a count instead of
+   * assuming the guest number.
+   */
   async function saveAddon(id: string) {
+    const priced = Boolean(draft.priced);
     await run(`addon:${id}`, () =>
-      supabase.from("addon_items").update({ name: draft.name?.trim() }).eq("id", id)
+      supabase
+        .from("addon_items")
+        .update({
+          name: draft.name?.trim(),
+          priced,
+          price: priced ? Number(draft.price) || 0 : Number(draft.price) || 0,
+          unit_label: priced ? (draft.unit_label?.trim() || "piece") : null,
+        })
+        .eq("id", id)
     );
   }
 
@@ -216,8 +241,12 @@ export default function MenusEditor({
     );
   }
 
+  const shownMenus = menus.filter((m) => matches(m.name, m.items));
+  const shownVenues = venues.filter((v) => matches(v.name));
+  const shownSettings = settings.filter((x) => matches(x.label, x.hint));
+
   const addonCategories: [string, AddonItem[]][] = [];
-  addons.forEach((item) => {
+  addons.filter((item) => matches(item.name, item.category)).forEach((item) => {
     let bucket = addonCategories.find(([cat]) => cat === item.category);
     if (!bucket) {
       bucket = [item.category, []];
@@ -270,6 +299,38 @@ export default function MenusEditor({
         </div>
       )}
 
+      <div className="relative mb-5">
+        <Search
+          size={15}
+          strokeWidth={2}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
+        />
+        <input
+          className="w-full text-sm pl-9 pr-9"
+          placeholder="Search menus, venues, items and charges — e.g. lamb, kheer, diamond, cooling…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {search && (
+          <button
+            onClick={() => setSearch("")}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-primary p-1"
+            title="Clear search"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {q && (
+        <div className="text-[11.5px] text-muted mb-4">
+          {shownMenus.length} menu{shownMenus.length === 1 ? "" : "s"} · {shownVenues.length} venue
+          {shownVenues.length === 1 ? "" : "s"} ·{" "}
+          {addonCategories.reduce((n, [, list]) => n + list.length, 0)} item
+          {addonCategories.reduce((n, [, list]) => n + list.length, 0) === 1 ? "" : "s"} match.
+        </div>
+      )}
+
       {error && (
         <div className="text-[12.5px] font-semibold text-rose bg-rose-light rounded-lg px-3 py-2 mb-4">{error}</div>
       )}
@@ -284,7 +345,7 @@ export default function MenusEditor({
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {menus.map((m) => {
+        {shownMenus.map((m) => {
           const key = `menu:${m.id}`;
           const isEditing = editing === key;
           return (
@@ -344,7 +405,7 @@ export default function MenusEditor({
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {venues.map((v) => {
+        {shownVenues.map((v) => {
           const key = `venue:${v.id}`;
           const isEditing = editing === key;
           return (
@@ -428,6 +489,9 @@ export default function MenusEditor({
       <div className="text-[14.5px] font-bold text-primary mb-1">Add-Ons</div>
       <div className="text-xs text-muted mb-3">
         Available for the Customized Menu, or as extras added on top of any regular menu when booking.
+        Almost everything here carries no rate of its own — the booking&apos;s single agreed per-head figure
+        covers it. Lamb Roast is the exception: it is charged by the piece, at the rate shown, on top of
+        that per-head figure.
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {addonCategories.map(([category, catItems]) => (
@@ -452,23 +516,57 @@ export default function MenusEditor({
                     <tr key={item.id} className="border-b border-border last:border-0">
                       <td className="py-1.5 pr-2">
                         {editing === key ? (
-                          <div className="flex gap-1.5 items-center py-1">
-                            <input
-                              className="flex-1 text-[12.5px]"
-                              value={draft.name ?? ""}
-                              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                              onKeyDown={(e) => e.key === "Enter" && saveAddon(item.id)}
-                              autoFocus
-                            />
-                            <button onClick={() => saveAddon(item.id)} className="text-gold-deep p-1">
-                              <Check size={14} />
-                            </button>
-                            <button onClick={() => setEditing(null)} className="text-muted p-1">
-                              <X size={14} />
-                            </button>
+                          <div className="py-1">
+                            <div className="flex gap-1.5 items-center">
+                              <input
+                                className="flex-1 text-[12.5px]"
+                                value={draft.name ?? ""}
+                                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                                onKeyDown={(e) => e.key === "Enter" && saveAddon(item.id)}
+                                autoFocus
+                              />
+                              <button onClick={() => saveAddon(item.id)} className="text-gold-deep p-1">
+                                <Check size={14} />
+                              </button>
+                              <button onClick={() => setEditing(null)} className="text-muted p-1">
+                                <X size={14} />
+                              </button>
+                            </div>
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted mt-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(draft.priced)}
+                                onChange={(e) => setDraft({ ...draft, priced: e.target.checked })}
+                              />
+                              Charged by the piece, on top of the per-head rate
+                            </label>
+                            {draft.priced && (
+                              <div className="flex gap-1.5 mt-1.5">
+                                <input
+                                  type="number"
+                                  className="w-24 text-[12px]"
+                                  placeholder="Rate"
+                                  value={draft.price ?? 0}
+                                  onChange={(e) => setDraft({ ...draft, price: e.target.value })}
+                                />
+                                <input
+                                  className="flex-1 text-[12px]"
+                                  placeholder="per what? e.g. lamb, leg piece"
+                                  value={draft.unit_label ?? ""}
+                                  onChange={(e) => setDraft({ ...draft, unit_label: e.target.value })}
+                                />
+                              </div>
+                            )}
                           </div>
                         ) : (
-                          item.name
+                          <>
+                            {item.name}
+                            {item.priced && Number(item.price) > 0 && (
+                              <span className="block text-[11px] font-semibold text-gold-deep">
+                                {money(item.price)} per {item.unit_label || "piece"}
+                              </span>
+                            )}
+                          </>
                         )}
                       </td>
                       {canEdit && editing !== key && (
@@ -501,7 +599,7 @@ export default function MenusEditor({
         </div>
         <table className="w-full text-[13px]">
           <tbody>
-            {settings.map((s) => {
+            {shownSettings.map((s) => {
               const key = `setting:${s.key}`;
               const isEditing = editing === key;
               return (
