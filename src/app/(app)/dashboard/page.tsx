@@ -100,6 +100,16 @@ export default async function DashboardPage() {
 
   const settings = await fetchSettings(supabase);
 
+  // Staff waiting on a password reset. Only the people who can act see this.
+  let resetRequests = 0;
+  if (role === "admin" || role === "developer") {
+    const { count } = await supabase
+      .from("password_reset_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    resetRequests = count || 0;
+  }
+
   const [{ data: venues }, { data: menus }, { data: bookings }] = await Promise.all([
     supabase.from("venues").select("*"),
     supabase.from("menus").select("*"),
@@ -154,6 +164,20 @@ export default async function DashboardPage() {
 
       {/* Renders nothing unless there is a discount request to act on, or a
           decision on one of this person's own requests. */}
+      {resetRequests > 0 && (
+        <Link
+          href="/admin/staff"
+          className="mt-5 flex items-center justify-between gap-3 rounded-xl2 border border-gold/40 bg-gold-light px-4 sm:px-5 py-3 hover:brightness-[0.98]"
+        >
+          <span className="text-[13px] font-bold text-gold-deep">
+            {resetRequests} staff member{resetRequests === 1 ? " is" : "s are"} waiting for a password reset
+          </span>
+          <span className="text-[11.5px] font-bold text-gold-deep flex items-center gap-1 whitespace-nowrap">
+            Open Staff & Access <ArrowUpRight size={12} />
+          </span>
+        </Link>
+      )}
+
       <div className="mt-5">
         <DiscountApprovals />
       </div>

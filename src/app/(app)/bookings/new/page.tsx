@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { calcTotals, money, parseMenuItems } from "@/lib/calculations";
+import { calcTotals, money, parseMenuItems, hallChargeNote } from "@/lib/calculations";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { FUNCTION_TYPES, CLIENT_TITLES, clientName, canConfirmBooking, type ClientTitle } from "@/types";
 import type { Venue, Menu, Booking, AddonItem } from "@/types";
@@ -469,7 +469,7 @@ export default function NewBookingPage() {
                     checked={selectedVenues.includes(v.id)}
                     onChange={() => toggleVenue(v.id)}
                   />
-                  {v.name} (max {v.capacity}, hall charge waived at {v.min_waiver}+ guests)
+                  {v.name} (max {v.capacity}, hall charge waived for each {v.min_waiver} guests)
                 </label>
               ))}
             </div>
@@ -785,15 +785,9 @@ export default function NewBookingPage() {
           <div className="text-right font-bold text-gold-deep">+ {money(totals.kprTax)}</div>
           <div className="text-gold-deep opacity-85">
             Hall Charge
-            {selectedVenues.length > 1 ? " (both halls)" : ""}
+            {totals.hallCount > 1 ? ` (${totals.hallCount} halls)` : ""}
             {totals.hallWaiverThreshold > 0 && (
-              <span className="block text-[10.5px] opacity-70">
-                {totals.hallWaived
-                  ? `Waived — ${n(guests)} guests is at or above ${totals.hallWaiverThreshold}`
-                  : `Waived at ${totals.hallWaiverThreshold}+ guests${
-                      selectedVenues.length > 1 ? " for two halls" : ""
-                    }`}
-              </span>
+              <span className="block text-[10.5px] opacity-70">{hallChargeNote(totals)}</span>
             )}
           </div>
           <div className="text-right font-bold text-gold-deep">+ {money(totals.hallCharge)}</div>

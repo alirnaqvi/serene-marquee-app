@@ -1,6 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "./calculations";
+import { chargesFromBooking, money, functionLabel, effectiveMenuItems, hallChargeNote } from "./calculations";
 import { SESSION_TIMES } from "./constants";
 import { DEFAULT_SETTINGS, type ChargeSettings } from "./settings";
 import { fmtDMY, fmtDMYTime } from "./dateFormat";
@@ -282,11 +282,7 @@ export function buildDocumentPdf(
     ["KPRA Tax", `${+(settings.kpraRate * 100).toFixed(2)}%`, "+ " + money(t.kprTax)],
     [
       "Hall Charge",
-      t.hallCharge
-        ? venueList.length > 1
-          ? `Both halls — waived at ${t.hallWaiverThreshold}+ guests`
-          : `Waived at ${t.hallWaiverThreshold}+ guests`
-        : `Waived (${t.hallWaiverThreshold}+ guests)`,
+      hallChargeNote(t),
       "+ " + money(t.hallCharge),
     ],
     ["Decoration", "", "+ " + money(t.decoration)],

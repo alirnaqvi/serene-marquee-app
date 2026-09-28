@@ -8,7 +8,7 @@ import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { useSession } from "@/components/SessionContext";
-import { downloadXlsx, monthName, currentMonth, recentMonths, monthBounds, type SheetColumn } from "@/lib/xlsx";
+import { downloadXlsx, monthName, currentMonth, recentMonths, upcomingMonths, monthBounds, type SheetColumn } from "@/lib/xlsx";
 import AlertModal from "@/components/AlertModal";
 import { bookingRef, clientName, recorderLabel, ROLE_LABELS } from "@/types";
 import type { Booking, Venue, Menu } from "@/types";
@@ -330,11 +330,22 @@ export default function BookingsPage() {
               onChange={(e) => e.target.value && setMonthRange(e.target.value)}
             >
               <option value="">Choose a month…</option>
-              {recentMonths(24).map((m) => (
-                <option key={m} value={m}>
-                  {monthName(m)}
-                </option>
-              ))}
+              <optgroup label="This month & coming up">
+                {upcomingMonths(18).map((m) => (
+                  <option key={m} value={m}>
+                    {monthName(m)}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Past months">
+                {recentMonths(25)
+                  .slice(1)
+                  .map((m) => (
+                    <option key={m} value={m}>
+                      {monthName(m)}
+                    </option>
+                  ))}
+              </optgroup>
             </select>
           </div>
           <div>
@@ -356,6 +367,12 @@ export default function BookingsPage() {
             className="btn-ghost rounded-lg px-3.5 py-2 text-sm h-[38px]"
           >
             This Month
+          </button>
+          <button
+            onClick={() => setMonthRange(upcomingMonths(1)[1])}
+            className="btn-ghost rounded-lg px-3.5 py-2 text-sm h-[38px]"
+          >
+            Next Month
           </button>
           <button
             onClick={() => {

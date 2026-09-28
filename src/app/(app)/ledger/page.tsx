@@ -9,7 +9,9 @@ import { downloadXlsx, monthName, currentMonth, recentMonths, type SheetColumn }
 import DateField from "@/components/DateField";
 import AlertModal from "@/components/AlertModal";
 import { useSession, ReadOnlyNotice } from "@/components/SessionContext";
-import type { LedgerEntry } from "@/types";
+import { generateStatementPdf, statementFigures } from "@/lib/generateStatementPdf";
+import { PERIOD_OPTIONS, periodRange, type PeriodId } from "@/lib/periods";
+import { ROLE_LABELS, type LedgerEntry } from "@/types";
 
 type NumField = number | "";
 type Row = LedgerEntry & { running: number };
@@ -30,7 +32,7 @@ const ALL_MONTHS = "__all__";
 
 export default function LedgerPage() {
   const supabase = createClient();
-  const { readOnly } = useSession();
+  const { readOnly, fullName, role } = useSession();
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   const [restricted, setRestricted] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -45,6 +47,13 @@ export default function LedgerPage() {
   // Free-text search over whatever the office is likely to remember about an
   // entry: what it was for, who took the money, or roughly how much it was.
   const [search, setSearch] = useState("");
+
+  // ---- Account statement (PDF) ----
+  const [showStatement, setShowStatement] = useState(false);
+  const [period, setPeriod] = useState<PeriodId>("this_month");
+  const [customFrom, setCustomFrom] = useState(periodRange("this_month").from);
+  const [customTo, setCustomTo] = useState(periodRange("this_month").to);
+  const [statementBusy, setStatementBusy] = useState(false);
 
   async function load() {
     // Joins the recording staff member's name in the same query — shown in
@@ -176,6 +185,39 @@ export default function LedgerPage() {
     ]);
   }
 
+  const statementRange =
+    period === "custom"
+      ? { from: customFrom, to: customTo, label: `${fmtDMY(customFrom)} to ${fmtDMY(customTo)}` }
+      : periodRange(period);
+  const statementPreview =
+    statementRange.from && statementRange.to && statementRange.from <= statementRange.to
+      ? statementFigures(entries || [], statementRange.from, statementRange.to)
+      : null;
+
+  async function downloadStatement() {
+    if (!statementPreview) return;
+    setStatementBusy(true);
+    let logo: string | undefined;
+    try {
+      const blob = await (await fetch("/logo.png")).blob();
+      logo = await new Promise((resolve) => {
+        const r = new FileReader();
+        r.onloadend = () => resolve(r.result as string);
+        r.readAsDataURL(blob);
+      });
+    } catch {}
+    generateStatementPdf({
+      entries: entries || [],
+      from: statementRange.from,
+      to: statementRange.to,
+      periodLabel: statementRange.label,
+      generatedBy: `${fullName} (${ROLE_LABELS[role] ?? role})`,
+      logoDataUri: logo,
+    });
+    setStatementBusy(false);
+    setShowStatement(false);
+  }
+
   if (restricted) {
     return (
       <div className="card max-w-md">
@@ -241,9 +283,12 @@ export default function LedgerPage() {
           <button
             onClick={handleExport}
             disabled={rows.length === 0}
-            className="btn-primary rounded-lg px-3.5 py-2 text-sm disabled:opacity-40"
+            className="btn-ghost rounded-lg px-3.5 py-2 text-sm disabled:opacity-40"
           >
-            ⤓ Download Excel
+            ⤓ Excel
+          </button>
+          <button onClick={() => setShowStatement(true)} className="btn-primary rounded-lg px-3.5 py-2 text-sm">
+            ⤓ Statement PDF
           </button>
         </div>
       </div>
@@ -399,6 +444,77 @@ export default function LedgerPage() {
           </tbody>
         </table></div>
       </div>
+
+      {showStatement && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4"
+          onClick={(e) => e.target === e.currentTarget && setShowStatement(false)}
+        >
+          <div className="bg-white rounded-xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-border">
+              <div className="font-bold text-sm text-primary">Account statement (PDF)</div>
+              <div className="text-xs text-muted mt-0.5">
+                Laid out like a bank statement — opening balance, every transaction with a running balance, closing
+                balance, totals by category and signature lines. For owners and auditors.
+              </div>
+            </div>
+            <div className="px-5 py-4 flex flex-col gap-3">
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Period</label>
+                <select className="w-full mt-1" value={period} onChange={(e) => setPeriod(e.target.value as PeriodId)}>
+                  {PERIOD_OPTIONS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {period === "custom" ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-muted uppercase">From</label>
+                    <DateField value={customFrom} onChange={setCustomFrom} className="w-full mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-muted uppercase">To</label>
+                    <DateField value={customTo} onChange={setCustomTo} className="w-full mt-1" />
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[12px] text-muted">
+                  {statementRange.label}: {fmtDMY(statementRange.from)} to {fmtDMY(statementRange.to)}
+                </div>
+              )}
+              {statementPreview ? (
+                <div className="grid grid-cols-2 gap-2 text-[12px] bg-bg border border-border rounded-lg p-3">
+                  <span className="text-muted">Opening balance</span>
+                  <span className="text-right font-semibold">{money(statementPreview.opening)}</span>
+                  <span className="text-muted">Money in ({statementPreview.creditCount})</span>
+                  <span className="text-right font-semibold text-gold-deep">+{money(statementPreview.credits)}</span>
+                  <span className="text-muted">Money out ({statementPreview.debitCount})</span>
+                  <span className="text-right font-semibold text-rose">-{money(statementPreview.debits)}</span>
+                  <span className="text-muted font-bold border-t border-border pt-1.5">Closing balance</span>
+                  <span className="text-right font-bold border-t border-border pt-1.5">{money(statementPreview.closing)}</span>
+                </div>
+              ) : (
+                <div className="text-rose text-[12px] font-semibold">The start date must be on or before the end date.</div>
+              )}
+            </div>
+            <div className="px-5 py-3.5 border-t border-border flex justify-end gap-2">
+              <button onClick={() => setShowStatement(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">
+                Cancel
+              </button>
+              <button
+                onClick={downloadStatement}
+                disabled={!statementPreview || statementBusy}
+                className="btn-primary rounded-lg px-4 py-2 text-sm disabled:opacity-40"
+              >
+                {statementBusy ? "Preparing…" : "Download PDF"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteTarget && (
         <AlertModal

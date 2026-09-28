@@ -1,3 +1,104 @@
+# Round 19 — closed sign-up, password resets, hall waivers, statements
+
+## Before deploying — three steps, in this order
+
+1. **Run `supabase/migration-2026-19.sql`** in the Supabase SQL editor (safe to re-run).
+2. **Add the service key to Vercel.** Supabase → Project Settings → API → copy the
+   `service_role` secret. In Vercel → Settings → Environment Variables add
+   `SUPABASE_SERVICE_ROLE_KEY` with that value (Production + Preview), then redeploy.
+   It has no `NEXT_PUBLIC_` prefix on purpose, so it never reaches a browser.
+   Never paste it anywhere else.
+3. **Turn off sign-up in Supabase too:** Authentication → Sign In / Providers →
+   switch off *Allow new users to sign up*.
+
+## 1. No more sign-up from the login page
+
+The *New Staff* tab is gone. More importantly, the random accounts weren't
+coming from the button: anyone with the site's public key could call sign-up
+directly. The database now refuses every new login unless it carries a
+single-use pass that only the server can issue, seconds before it creates the
+account from Staff & Access. Hiding the button plus the dashboard switch plus
+this check means three separate locks.
+
+**New logins** are made by the Developer from **Staff & Access → Add staff
+login**: name, username and role. The app shows a temporary password once, to
+hand over in person.
+
+**Cleaning up the random accounts:** Staff & Access now shows each login's last
+sign-in. **Remove** deletes one; if it has any records attached (bookings,
+ledger lines, requests) it is switched off instead, so history stays intact.
+**Switch off / Switch on** blocks a login without removing it.
+
+> Accounts can no longer be added from the Supabase dashboard's *Add user*
+> button either — the database refuses them. Use Staff & Access.
+
+## 2. Forgot / reset password
+
+Staff sign in with a username, not a real email, so a reset email can't reach
+them. Instead:
+
+1. **Forgot password?** on the login page sends a request (with an optional
+   message) to the Admin and Developer. The reply is identical whether the
+   username exists or not, and requests are rate-limited, so it can't be used to
+   probe for usernames or flood the queue.
+2. The request appears on the **dashboard** and at the top of **Staff &
+   Access**. After checking it's really them, the Admin/Developer presses **Issue
+   temporary password**. The old password stops working at once.
+3. The temporary password is shown once, is easy to read out
+   (e.g. `k7mp-x3qa-9t`), and **expires after 24 hours**.
+4. Signing in with it opens a **Choose your new password** screen; nothing else
+   in the app opens until it's changed.
+
+Who can reset whom: the Developer can reset anyone else; the Admin can reset
+everyone below Admin. Nobody can reset an account at their own level or above.
+
+**Profile → Change password** now asks for the current password first, so a
+computer left signed in can't be used to lock someone out. Passwords need at
+least 8 characters with letters and a number.
+
+## 3. Hall charge with two or three halls
+
+Each hall is waived for every 200 guests (each hall's own minimum):
+
+| Halls | Guests | Hall charge |
+|---|---|---|
+| 2 | under 200 | both charged |
+| 2 | 200 – 399 | one charged |
+| 2 | 400+ | none |
+| 3 | under 200 | all three charged |
+| 3 | 200 – 399 | two charged |
+| 3 | 400 – 599 | one charged |
+| 3 | 600+ | none |
+
+The booking form, booking page and PDFs explain it, e.g. *"One of 2 halls
+waived · both at 400+"*.
+
+> Totals are worked out live, so an existing two-hall booking with 200–399
+> guests now shows one hall charge less than before. Check any such bookings
+> whose invoice has already gone to the client.
+
+## 4. Account statement PDF
+
+**Ledger → ⤓ Statement PDF.** Pick a period — this/last week, month, quarter,
+calendar year, Pakistani financial year (Jul–Jun), or any custom dates — and
+see the opening balance, money in, money out and closing balance before
+downloading.
+
+The PDF is laid out like a bank statement: letterhead, statement number, period,
+who generated it and when; an opening/in/out/closing summary; every
+transaction in date order with debit, credit and running balance (plus
+category, who it was handed to and who recorded it); totals by category; a
+one-line reconciliation; and *Prepared by / Checked by / Approved by* signature
+lines. Page numbers on every page. The opening balance is carried from the
+ledger's full history, so any period is correct on its own.
+
+## 5. Booking next month's dates
+
+**Quick Month** now lists this month and the next 18 months first, then past
+months. There is also a **Next Month** button beside *This Month*.
+
+---
+
 # Round 18 — client payments, auto-applied discounts, payroll ledger
 
 **Run `supabase/migration-2026-18.sql` in the Supabase SQL editor before

@@ -6,7 +6,11 @@ import { NextResponse, type NextRequest } from "next/server";
 //
 // Exact matches only — a `startsWith` check here would mean a path like
 // /login-something, or worse /dashboard prefixed oddly, could slip through.
-const PUBLIC_PATHS = new Set(["/", "/login"]);
+const PUBLIC_PATHS = new Set(["/", "/login", "/api/auth/forgot"]);
+
+// Where someone signed in on a temporary password is allowed to be: only the
+// page and route that let them choose a real one.
+const CHANGE_PASSWORD_PATHS = new Set(["/change-password", "/api/auth/change-password"]);
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.has(pathname);
@@ -45,8 +49,33 @@ export async function middleware(request: NextRequest) {
 
   // Not signed in and asking for a staff page — send them to the login form.
   if (!user && !isPublic(pathname)) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "You're not signed in." }, { status: 401 });
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  // Signed in with a temporary password from the Admin: nothing else opens
+  // until a new password is chosen, and the temporary one stops working after
+  // 24 hours.
+  if (user && user.app_metadata?.must_change_password && !CHANGE_PASSWORD_PATHS.has(pathname)) {
+    const expires = user.app_metadata?.temp_password_expires_at;
+    const url = request.nextUrl.clone();
+    if (expires && new Date(expires) < new Date()) {
+      await supabase.auth.signOut();
+      url.pathname = "/login";
+      url.search = "?expired=1";
+      const out = NextResponse.redirect(url);
+      response.cookies.getAll().forEach((c) => out.cookies.set(c));
+      return out;
+    }
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Choose a new password first." }, { status: 403 });
+    }
+    url.pathname = "/change-password";
+    url.search = "";
     return NextResponse.redirect(url);
   }
 

@@ -27,6 +27,9 @@ export type ChargeBreakdown = {
   /** Guest count at which the hall charge is waived for the selected venue(s). */
   hallWaiverThreshold: number;
   hallWaived: boolean;
+  hallCount: number;
+  hallWaivedCount: number;
+  hallNextThreshold: number | null;
   coolingCharge: number;
   heatingCharge: number;
   decoration: number;
@@ -41,25 +44,84 @@ export type ChargeBreakdown = {
 /**
  * HALL CHARGE WAIVER
  *
- * Each venue carries its own waiver minimum (Serene Diamond and Serene Gold are
- * both 200). One hall is waived at that hall's own minimum. When two halls are
- * taken the function has to be big enough to fill both before the charge goes,
- * so the minimums ADD UP — 200 + 200 = 400 guests for Diamond + Gold together.
+ * Every hall is waived once the function has enough guests to fill it — its
+ * own minimum, 200 for each hall today. With more than one hall, the guests
+ * are counted against the halls one at a time:
  *
- * The waiver is all-or-nothing across the selected halls: below the combined
- * minimum every hall is charged, at or above it every hall is free. The figures
- * come from the venues table, so the Admin changing a minimum on Menus & Venues
- * moves this rule with it.
+ *   2 halls, 150 guests  -> both charged
+ *   2 halls, 250 guests  -> one waived, one charged      (200 covers one hall)
+ *   2 halls, 400 guests  -> both waived
+ *   3 halls, 450 guests  -> two waived, one charged      (400 covers two)
+ *   3 halls, 600 guests  -> all three waived
+ *
+ * The halls with the smallest minimum are waived first; where minimums are
+ * equal the dearer hall is waived first, which is the client's favour. The
+ * minimums come from the venues table, so the Admin changing one on Menus &
+ * Venues moves this rule with it.
  */
-export function hallChargeFor(
-  guests: number,
-  venueList: Venue[]
-): { charge: number; threshold: number; waived: boolean } {
-  if (venueList.length === 0) return { charge: 0, threshold: 0, waived: false };
-  const threshold = venueList.reduce((sum, v) => sum + v.min_waiver, 0);
-  const full = venueList.reduce((sum, v) => sum + v.hall_charge, 0);
-  const waived = guests >= threshold;
-  return { charge: waived ? 0 : full, threshold, waived };
+export type HallCharge = {
+  charge: number;
+  /** Guests needed for EVERY selected hall to be waived. */
+  threshold: number;
+  /** True when every selected hall is waived. */
+  waived: boolean;
+  hallCount: number;
+  waivedCount: number;
+  /** Guests at which the next hall would be waived, or null if all are. */
+  nextThreshold: number | null;
+};
+
+export function hallChargeFor(guests: number, venueList: Venue[]): HallCharge {
+  const ordered = [...venueList].sort(
+    (a, b) => a.min_waiver - b.min_waiver || b.hall_charge - a.hall_charge
+  );
+  let covered = 0;
+  let charge = 0;
+  let waivedCount = 0;
+  let nextThreshold: number | null = null;
+  for (const v of ordered) {
+    covered += v.min_waiver;
+    if (guests >= covered) waivedCount++;
+    else {
+      charge += v.hall_charge;
+      if (nextThreshold === null) nextThreshold = covered;
+    }
+  }
+  return {
+    charge,
+    threshold: covered,
+    waived: ordered.length > 0 && waivedCount === ordered.length,
+    hallCount: ordered.length,
+    waivedCount,
+    nextThreshold,
+  };
+}
+
+const COUNT_WORDS = ["no", "one", "two", "three", "four", "five"];
+const countWord = (n: number) => COUNT_WORDS[n] ?? String(n);
+
+/**
+ * One short line explaining the hall charge, used by the booking form, the
+ * booking page and the PDFs so they all say the same thing.
+ */
+export function hallChargeNote(t: {
+  hallCount: number;
+  hallWaivedCount: number;
+  hallWaiverThreshold: number;
+  hallNextThreshold: number | null;
+}): string {
+  const { hallCount, hallWaivedCount, hallWaiverThreshold, hallNextThreshold } = t;
+  if (hallCount === 0) return "";
+  if (hallCount === 1) {
+    return hallWaivedCount ? `Waived (${hallWaiverThreshold}+ guests)` : `Waived at ${hallWaiverThreshold}+ guests`;
+  }
+  const all = hallCount === 2 ? "both" : `all ${countWord(hallCount)}`;
+  if (hallWaivedCount === hallCount) return `${all[0].toUpperCase()}${all.slice(1)} halls waived (${hallWaiverThreshold}+ guests)`;
+  if (hallWaivedCount === 0) return `One hall waived at ${hallNextThreshold}+ guests, ${all} at ${hallWaiverThreshold}+`;
+  const done = `${countWord(hallWaivedCount)[0].toUpperCase()}${countWord(hallWaivedCount).slice(1)} of ${hallCount} halls waived`;
+  return hallNextThreshold === hallWaiverThreshold
+    ? `${done} · ${all} at ${hallWaiverThreshold}+`
+    : `${done} · next at ${hallNextThreshold}+, ${all} at ${hallWaiverThreshold}+`;
 }
 
 export function calcTotals(
@@ -114,6 +176,9 @@ export function calcTotals(
     hallCharge,
     hallWaiverThreshold: hall.threshold,
     hallWaived: hall.waived,
+    hallCount: hall.hallCount,
+    hallWaivedCount: hall.waivedCount,
+    hallNextThreshold: hall.nextThreshold,
     coolingCharge,
     heatingCharge,
     decoration,

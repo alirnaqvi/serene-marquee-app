@@ -304,6 +304,18 @@ export function recentMonths(count = 18): string[] {
   return out;
 }
 
+/** This month and the `count` months after it, soonest first, as 'YYYY-MM'. */
+export function upcomingMonths(count = 12): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i <= count; i++) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() + 1);
+  }
+  return out;
+}
+
 /** First and last day of a 'YYYY-MM' month, as ISO date strings. */
 export function monthBounds(month: string): { from: string; to: string } {
   const [y, m] = month.split("-").map(Number);

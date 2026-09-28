@@ -45,6 +45,7 @@ export default function ProfilePage() {
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -74,12 +75,12 @@ export default function ProfilePage() {
   const checks = useMemo(
     () => [
       { label: `At least ${MIN_PASSWORD} characters`, ok: newPassword.length >= MIN_PASSWORD },
-      { label: "Contains a number", ok: /\d/.test(newPassword) },
+      { label: "Letters and at least one number", ok: /\d/.test(newPassword) && /[a-zA-Z]/.test(newPassword) },
       { label: "Both entries match", ok: newPassword.length > 0 && newPassword === confirmPassword },
     ],
     [newPassword, confirmPassword]
   );
-  const passwordReady = checks.every((c) => c.ok);
+  const passwordReady = currentPassword.length > 0 && checks.every((c) => c.ok);
 
   async function saveName() {
     if (!profile || !nameChanged) return;
@@ -102,10 +103,18 @@ export default function ProfilePage() {
     setPwMsg(null);
     if (!passwordReady) return;
     setPwSaving(true);
-    const { error: err } = await supabase.auth.updateUser({ password: newPassword });
-    if (err) setPwError(err.message);
+    // The server checks the current password first, so nobody can change it
+    // from a computer that was simply left signed in.
+    const res = await fetch("/api/auth/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current: currentPassword, next: newPassword }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) setPwError(out.error || "Couldn't change the password.");
     else {
       setPwMsg("Password updated. Use it the next time you sign in.");
+      setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
       setShowPassword(false);
@@ -234,6 +243,16 @@ export default function ProfilePage() {
             </div>
 
             <div className="grid gap-3">
+              <div>
+                <label className="text-xs font-bold text-muted uppercase">Current password</label>
+                <input
+                  type={showPassword ? "text" : "password"}
+                  className="w-full mt-1"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </div>
               <div>
                 <label className="text-xs font-bold text-muted uppercase">New password</label>
                 <div className="relative mt-1">

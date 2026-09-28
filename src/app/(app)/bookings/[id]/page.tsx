@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "@/lib/calculations";
+import { chargesFromBooking, money, functionLabel, effectiveMenuItems, hallChargeNote } from "@/lib/calculations";
 import { SESSION_TIMES } from "@/lib/constants";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
 import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
@@ -391,11 +391,7 @@ export default function BookingDetailPage() {
           <div className="text-right font-bold text-gold-deep">+ {money(t.kprTax)}</div>
           <div className="text-gold-deep opacity-85">
             Hall Charge
-            {t.hallCharge
-              ? venueList.length > 1
-                ? ` (both halls — waived at ${t.hallWaiverThreshold}+ guests)`
-                : ""
-              : ` (waived — ${t.hallWaiverThreshold}+ guests)`}
+            <span className="block text-[10.5px] opacity-70">{hallChargeNote(t)}</span>
           </div>
           <div className="text-right font-bold text-gold-deep">+ {money(t.hallCharge)}</div>
           <div className="text-gold-deep opacity-85">Decoration</div>
