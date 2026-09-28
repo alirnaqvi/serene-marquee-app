@@ -4,8 +4,8 @@ import { chargesFromBooking, money, functionLabel, effectiveMenuItems } from "./
 import { SESSION_TIMES } from "./constants";
 import { DEFAULT_SETTINGS, type ChargeSettings } from "./settings";
 import { fmtDMY, fmtDMYTime } from "./dateFormat";
-import { bookingRef, clientName } from "@/types";
-import type { Booking, Venue, Menu, BookingAddon } from "@/types";
+import { bookingRef, clientName, recorderLabel } from "@/types";
+import type { Booking, Venue, Menu, BookingAddon, BookingPayment } from "@/types";
 
 const GOLD: [number, number, number] = [138, 106, 30];
 const INK: [number, number, number] = [27, 24, 16];
@@ -95,7 +95,9 @@ export function buildDocumentPdf(
   logoDataUri?: string,
   // KPRA and the entry-test rate are set by the Admin on Menus & Venues; the
   // code constants are the fallback if they haven't loaded.
-  settings: ChargeSettings = DEFAULT_SETTINGS
+  settings: ChargeSettings = DEFAULT_SETTINGS,
+  // Payments received after the advance, listed on the invoice and agreement.
+  payments: BookingPayment[] = []
 ) {
   const cfg = DOC_CONFIG[docType];
   const menu = menus.find((m) => m.id === booking.menu_id);
@@ -184,7 +186,13 @@ export function buildDocumentPdf(
   );
   if (booking.reference) details.push(["Discount Reference", booking.reference]);
   if (docType !== "Quotation") details.push(["Status", booking.status]);
-  if (docType === "Agreement") details.push(["Booking Recorded On", fmtDMYTime(new Date(booking.created_at))]);
+  if (docType !== "Quotation") {
+    // Who took the booking and when — the same trail the ledger keeps.
+    details.push(
+      ["Recorded By", recorderLabel(booking.recorder)],
+      ["Recorded On", fmtDMYTime(new Date(booking.created_at))]
+    );
+  }
 
   autoTable(doc, {
     startY: y,
@@ -288,7 +296,15 @@ export function buildDocumentPdf(
     ["Discount", "", "- " + money(t.discountAmount)]
   );
   if (docType !== "Quotation") {
-    charges.push(["Advance Paid", "", "- " + money(booking.advance)]);
+    charges.push(["Advance Paid", "At booking", "- " + money(booking.advance)]);
+    const later = t.totalReceived - booking.advance;
+    if (later > 0) {
+      charges.push([
+        "Payments Received",
+        `${payments.length || ""} payment${payments.length === 1 ? "" : "s"} since booking — see below`.trim(),
+        "- " + money(later),
+      ]);
+    }
   }
 
   autoTable(doc, {
@@ -317,6 +333,45 @@ export function buildDocumentPdf(
   doc.text(docType === "Quotation" ? "Estimated Total" : "Balance Due", margin + 10, y + 14.5);
   doc.text(money(docType === "Quotation" ? t.grandTotal : t.balance), pageW - margin - 10, y + 14.5, { align: "right" });
   y += 36;
+
+  // Payment history: the advance, then every later payment, so the client
+  // can see exactly how the balance was arrived at.
+  if (docType !== "Quotation" && payments.length > 0) {
+    if (y > pageH - 120) {
+      doc.addPage();
+      y = 46;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(TYPE.sectionHeading);
+    doc.setTextColor(...DARK);
+    doc.text("Payments Received", margin, y);
+    y += 6;
+    const history: string[][] = [];
+    if (booking.advance > 0) {
+      history.push([fmtDMYTime(new Date(booking.created_at)).split(",")[0], "Advance at booking", money(booking.advance)]);
+    }
+    [...payments]
+      .sort((a, b) => a.paid_on.localeCompare(b.paid_on) || a.created_at.localeCompare(b.created_at))
+      .forEach((p) =>
+        history.push([fmtDMY(p.paid_on), [p.method, p.note].filter(Boolean).join(" — ") || "Payment", money(p.amount)])
+      );
+    history.push(["", "Total received", money(t.totalReceived)]);
+    autoTable(doc, {
+      startY: y,
+      theme: "grid",
+      margin: { left: margin, right: margin },
+      headStyles: { fillColor: CREAM, textColor: INK, fontStyle: "bold", fontSize: TYPE.table },
+      styles: { fontSize: TYPE.table, cellPadding: 2.8, textColor: INK, lineColor: LINE, lineWidth: 0.4 },
+      head: [["Date", "Details", "Amount"]],
+      body: history,
+      columnStyles: { 0: { cellWidth: 70 }, 2: { halign: "right", cellWidth: 90 } },
+      didParseCell: (data: any) => {
+        if (data.section === "body" && data.row.index === history.length - 1) data.cell.styles.fontStyle = "bold";
+      },
+    });
+    // @ts-ignore
+    y = doc.lastAutoTable.finalY + 14;
+  }
 
   if (booking.notes) {
     doc.setFont("helvetica", "bold");
@@ -386,9 +441,10 @@ export function generateDocumentPdf(
   addons: BookingAddon[] = [],
   docType: DocType = "Agreement",
   logoDataUri?: string,
-  settings: ChargeSettings = DEFAULT_SETTINGS
+  settings: ChargeSettings = DEFAULT_SETTINGS,
+  payments: BookingPayment[] = []
 ) {
-  const { doc, fileName } = buildDocumentPdf(booking, venues, menus, addons, docType, logoDataUri, settings);
+  const { doc, fileName } = buildDocumentPdf(booking, venues, menus, addons, docType, logoDataUri, settings, payments);
   doc.save(fileName);
 }
 
@@ -400,9 +456,10 @@ export function documentPdfFile(
   addons: BookingAddon[] = [],
   docType: DocType = "Agreement",
   logoDataUri?: string,
-  settings: ChargeSettings = DEFAULT_SETTINGS
+  settings: ChargeSettings = DEFAULT_SETTINGS,
+  payments: BookingPayment[] = []
 ): File {
-  const { doc, fileName } = buildDocumentPdf(booking, venues, menus, addons, docType, logoDataUri, settings);
+  const { doc, fileName } = buildDocumentPdf(booking, venues, menus, addons, docType, logoDataUri, settings, payments);
   const blob = doc.output("blob");
   return new File([blob], fileName, { type: "application/pdf" });
 }

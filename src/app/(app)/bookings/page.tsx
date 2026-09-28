@@ -6,11 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { chargesFromBooking, money, functionLabel } from "@/lib/calculations";
 import { DEFAULT_SETTINGS, fetchSettings, type ChargeSettings } from "@/lib/settings";
-import { fmtDMY } from "@/lib/dateFormat";
+import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { useSession } from "@/components/SessionContext";
 import { downloadXlsx, monthName, currentMonth, recentMonths, monthBounds, type SheetColumn } from "@/lib/xlsx";
 import AlertModal from "@/components/AlertModal";
-import { bookingRef, clientName } from "@/types";
+import { bookingRef, clientName, recorderLabel, ROLE_LABELS } from "@/types";
 import type { Booking, Venue, Menu } from "@/types";
 
 function Stat({
@@ -86,7 +86,10 @@ export default function BookingsPage() {
       const [{ data: v }, { data: m }, { data: b }] = await Promise.all([
         supabase.from("venues").select("*"),
         supabase.from("menus").select("*"),
-        supabase.from("bookings").select("*").order("event_date"),
+        supabase
+          .from("bookings")
+          .select("*, recorder:profiles!bookings_created_by_fkey(full_name, role)")
+          .order("event_date"),
       ]);
       setVenues(v || []);
       setMenus(m || []);
@@ -122,6 +125,8 @@ export default function BookingsPage() {
       // Order / booking number — matches "SM-000123", "123", or the raw ref
       if (bookingRef(b).toLowerCase().includes(q)) return true;
       if (qDigits && b.booking_number && String(b.booking_number).includes(qDigits)) return true;
+      // Who recorded it
+      if ((b.recorder?.full_name || "").toLowerCase().includes(q)) return true;
       // Phone is a handy extra when someone calls in about their booking
       if (qDigits.length >= 4 && (b.phone || "").replace(/\D/g, "").includes(qDigits)) return true;
 
@@ -156,7 +161,7 @@ export default function BookingsPage() {
       acc.guests += b.guests;
       acc.gross += t.grandTotal;
       acc.discount += t.discountAmount;
-      acc.advance += b.advance;
+      acc.advance += t.totalReceived;
       acc.balance += t.balance;
     });
     counted.filter((b) => b.advance_refunded).forEach((b) => {
@@ -231,10 +236,14 @@ export default function BookingsPage() {
     { header: "Food Subtotal", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).foodSubtotal), money: true },
     { header: "Discount", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).discountAmount), money: true },
     { header: "Grand Total", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).grandTotal), money: true },
-    { header: "Payment Received", value: (b) => Math.round(b.advance), money: true },
+    { header: "Advance", value: (b) => Math.round(b.advance), money: true },
+    { header: "Later Payments", value: (b) => Math.round(Number(b.payments_total) || 0), money: true },
+    { header: "Total Received", value: (b) => Math.round(b.advance + (Number(b.payments_total) || 0)), money: true },
     { header: "Refunded", value: (b) => Math.round(b.advance_refunded ? b.refund_amount : 0), money: true },
     { header: "Balance", value: (b) => Math.round(chargesFromBooking(b, venues, menus, settings).balance), money: true },
     { header: "Status", value: (b) => b.status },
+    { header: "Recorded By", value: (b) => recorderLabel(b.recorder), width: 30 },
+    { header: "Recorded On", value: (b) => fmtDMYTime(new Date(b.created_at)), width: 20 },
   ];
 
   function handleExport() {
@@ -248,7 +257,7 @@ export default function BookingsPage() {
           "Serene Marquee — Bookings Summary",
           `Period: ${rangeLabel}${statusFilter !== "all" ? ` · ${statusFilter} only` : ""}`,
           `${summary.count} bookings (${summary.confirmed} confirmed, ${summary.tentative} tentative, ${summary.cancelled} cancelled) · ${summary.guests} guests`,
-          `Gross: Rs. ${Math.round(summary.gross).toLocaleString("en-PK")}   |   Advance: Rs. ${Math.round(
+          `Gross: Rs. ${Math.round(summary.gross).toLocaleString("en-PK")}   |   Received: Rs. ${Math.round(
             summary.advance
           ).toLocaleString("en-PK")}   |   Balance Due: Rs. ${Math.round(summary.balance).toLocaleString("en-PK")}`,
         ],
@@ -264,6 +273,8 @@ export default function BookingsPage() {
           "",
           Math.round(summary.discount),
           Math.round(summary.gross),
+          "",
+          "",
           Math.round(summary.advance),
           Math.round(summary.refunded),
           Math.round(summary.balance),
@@ -295,7 +306,7 @@ export default function BookingsPage() {
             <label className="text-xs font-bold text-muted uppercase">Search</label>
             <input
               className="w-full mt-1"
-              placeholder="Client name or order number (e.g. Ahmed Khan, SM-000123, 123)…"
+              placeholder="Client, order number or who recorded it (e.g. Ahmed Khan, SM-000123)…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -386,13 +397,13 @@ export default function BookingsPage() {
           <Stat label="Cancelled" value={String(summary.cancelled)} sub={summary.refunded > 0 ? `${money(summary.refunded)} refunded` : "none refunded"} />
           <Stat label="Guests" value={summary.guests.toLocaleString("en-PK")} sub="excludes cancelled" />
           <Stat label="Gross Total" value={money(summary.gross)} sub={`after ${money(summary.discount)} discount`} />
-          <Stat label="Advance Received" value={money(summary.advance)} />
+          <Stat label="Received" value={money(summary.advance)} sub="advances + later payments" />
           <Stat label="Balance Due" value={money(summary.balance)} tone="rose" />
         </div>
       </div>
 
       <div className="card">
-        <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[680px] text-[13px]">
+        <div className="overflow-x-auto -mx-1"><table className="w-full min-w-[900px] text-[13px]">
           <thead>
             <tr className="text-left text-muted text-[11px] uppercase tracking-wide border-b border-border">
               <th className="py-2 px-2">Ref</th>
@@ -405,13 +416,14 @@ export default function BookingsPage() {
               <th className="py-2 px-2">Payment Received</th>
               <th className="py-2 px-2">Balance</th>
               <th className="py-2 px-2">Status</th>
+              <th className="py-2 px-2">Recorded By</th>
               <th className="py-2 px-2"></th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={11} className="text-center py-8 text-muted text-sm">
+                <td colSpan={12} className="text-center py-8 text-muted text-sm">
                   No bookings match your search
                 </td>
               </tr>
@@ -440,9 +452,17 @@ export default function BookingsPage() {
                         booking. A refunded advance is money that went back
                         out, so it is shown as nil received with the refund
                         noted underneath rather than quietly left standing. */}
-                    <span className={b.advance > 0 && !b.advance_refunded ? "text-gold-deep font-semibold" : "text-muted"}>
-                      {money(b.advance_refunded ? 0 : b.advance)}
+                    <span className={t.totalReceived > 0 && !b.advance_refunded ? "text-gold-deep font-semibold" : "text-muted"}>
+                      {money(b.advance_refunded ? 0 : t.totalReceived)}
                     </span>
+                    {!b.advance_refunded && (Number(b.payments_total) || 0) > 0 && (
+                      <>
+                        <br />
+                        <span className="text-[10.5px] text-muted">
+                          {money(b.advance)} advance + {money(b.payments_total)} since
+                        </span>
+                      </>
+                    )}
                     {b.advance_refunded && (
                       <>
                         <br />
@@ -454,6 +474,19 @@ export default function BookingsPage() {
                     {money(t.balance)}
                   </td>
                   <td className="py-2.5 px-2">{statusPill(b.status)}</td>
+                  <td className="py-2.5 px-2 text-[11.5px] leading-snug whitespace-nowrap">
+                    {b.recorder ? (
+                      <>
+                        <span className="font-semibold text-ink">{b.recorder.full_name}</span>
+                        <br />
+                        <span className="text-muted">{ROLE_LABELS[b.recorder.role] ?? b.recorder.role}</span>
+                        <br />
+                        <span className="text-[10px] text-muted">{fmtDMYTime(new Date(b.created_at))}</span>
+                      </>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
                   <td className="py-2.5 px-2">
                     {/* A draft has nothing to show yet — resuming it means
                         reopening the form where it was left. */}

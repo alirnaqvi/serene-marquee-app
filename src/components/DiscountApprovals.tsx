@@ -88,8 +88,13 @@ export default function DiscountApprovals() {
         (r) =>
           r.requested_by === user.id &&
           r.status !== "pending" &&
-          !r.consumed_booking_id &&
-          !r.dismissed_at
+          !r.dismissed_at &&
+          // An approval now applies itself to the booking the moment it is
+          // granted, so "spent" no longer means the requester has seen it.
+          // Keep the notice up for a fortnight after the decision (or until
+          // dismissed) so they learn it went through.
+          (!r.consumed_booking_id ||
+            (r.decided_at !== null && Date.now() - new Date(r.decided_at).getTime() < 14 * 86400000))
       )
     );
 
@@ -422,9 +427,11 @@ export default function DiscountApprovals() {
                 </div>
                 <div className={`text-[12px] mt-0.5 ${approved ? "text-gold-deep/85" : "text-rose/85"}`}>
                   {approved
-                    ? `Open the booking, set the discount to ${money(
-                        req.approved_amount ?? req.requested_amount
-                      )} or less, and save.`
+                    ? req.consumed_booking_id
+                      ? `${money(req.approved_amount ?? req.requested_amount)} has been applied to the booking — nothing to re-enter.`
+                      : `${money(
+                          req.approved_amount ?? req.requested_amount
+                        )} will be filled in for you when you open the booking.`
                     : "The discount can't be applied at that amount."}
                   {req.client_name && <> · {req.client_name}</>}
                 </div>

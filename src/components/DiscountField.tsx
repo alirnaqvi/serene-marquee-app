@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useSession } from "@/components/SessionContext";
 import { ROLE_LABELS, approversFor, type DiscountApproval } from "@/types";
@@ -39,9 +39,9 @@ export type DiscountContext = {
  * ceiling: Rs. 150,000 approved at Rs. 120,000 lets Rs. 120,000 through and
  * refuses Rs. 121,000.
  *
- * Because the request is tied to a saved booking, this can only be done from
- * an existing booking. On a brand-new booking there is no order number yet, so
- * the field explains to save first.
+ * Once approved, the granted figure goes into this box by itself — and the
+ * database writes it onto the saved booking in the same step as the approval —
+ * so nobody has to type the approved amount in again.
  */
 export default function DiscountField({
   value,
@@ -69,21 +69,32 @@ export default function DiscountField({
   const [askAmount, setAskAmount] = useState<NumField>("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  // Approvals this field has already dealt with, so each one fills the box once
+  // and a figure the user then changes by hand is left alone.
+  const handled = useRef<Set<string> | null>(null);
+  const [autoApplied, setAutoApplied] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
-    const { data } = await supabase
+    // Unspent requests, plus any already spent on THIS booking — an approval
+    // written onto the booking is still what lets it carry that discount.
+    let query = supabase
       .from("discount_approvals")
       .select("*")
       .eq("requested_by", user.id)
-      .is("consumed_booking_id", null)
       .order("created_at", { ascending: false })
       .limit(20);
+    query = bookingId
+      ? query.or(`consumed_booking_id.is.null,consumed_booking_id.eq.${bookingId}`)
+      : query.is("consumed_booking_id", null);
+    const { data } = await query;
     setRequests((data as DiscountApproval[]) || []);
-  }, [supabase]);
+    setLoaded(true);
+  }, [supabase, bookingId]);
 
   useEffect(() => {
     if (unlimited) return;
@@ -103,6 +114,7 @@ export default function DiscountField({
   // the database would refuse.
   const norm = (x: string) => x.replace(/\s+/g, " ").trim().toLowerCase();
   const belongsHere = (r: DiscountApproval) => {
+    if (bookingId && r.consumed_booking_id === bookingId) return true;
     if (r.booking_id) return r.booking_id === bookingId;
     if (r.client_name)
       return (
@@ -124,6 +136,30 @@ export default function DiscountField({
   const rejected = mine.find((r) => r.status === "rejected" && !pending && !approved);
 
   const permitCeiling = approved ? approved.approved_amount ?? approved.requested_amount : 0;
+
+  // Fill in the granted figure the moment an approval lands.
+  //  - While the form is open, a request that turns 'approved' fills the box.
+  //  - On opening a form, an approval that was granted but never reached the
+  //    booking (e.g. it was raised before the booking had been saved once)
+  //    fills it too. One the database already applied is in the loaded
+  //    figure, so it is left as it is.
+  useEffect(() => {
+    if (!loaded || unlimited) return;
+    const approvedHere = mine.filter((r) => r.status === "approved");
+    const firstPass = handled.current === null;
+    if (firstPass) handled.current = new Set();
+    const seen = handled.current!;
+    for (const r of approvedHere) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      const granted = r.approved_amount ?? r.requested_amount;
+      const alreadyOnBooking = firstPass && r.consumed_booking_id !== null;
+      if (!alreadyOnBooking && granted !== amount) {
+        onChange(granted);
+        setAutoApplied(granted);
+      }
+    }
+  }, [loaded, requests, bookingId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The most this person can actually put on this booking right now: their own
   // limit, raised by any approval they're holding.
@@ -217,8 +253,9 @@ export default function DiscountField({
       {/* ---- above your limit, but covered by an approval you hold ---- */}
       {usingPermit && (
         <div className="text-[11px] text-gold-deep font-semibold mt-1.5 bg-primary-dim rounded-md px-2.5 py-1.5">
-          Approved up to Rs. {permitCeiling.toLocaleString("en-PK")}
-          {ref && ` on ${ref}`} — you can save this booking.
+          {autoApplied !== null && autoApplied === amount
+            ? `Approved discount of Rs. ${permitCeiling.toLocaleString("en-PK")} filled in for you${ref ? ` on ${ref}` : ""}.`
+            : `Approved up to Rs. ${permitCeiling.toLocaleString("en-PK")}${ref ? ` on ${ref}` : ""}.`}
           {approved?.decision_note && <div className="font-normal mt-0.5">“{approved.decision_note}”</div>}
         </div>
       )}

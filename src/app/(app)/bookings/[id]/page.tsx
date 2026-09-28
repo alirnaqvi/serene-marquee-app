@@ -11,9 +11,10 @@ import { fmtDMY, fmtDMYTime } from "@/lib/dateFormat";
 import { generateDocumentPdf, documentPdfFile } from "@/lib/generateAgreementPdf";
 import { toWhatsAppNumber, coveringMessage, sendPdfOnWhatsApp } from "@/lib/whatsapp";
 import AlertModal from "@/components/AlertModal";
+import BookingPayments from "@/components/BookingPayments";
 import { useSession } from "@/components/SessionContext";
-import { bookingRef, clientName } from "@/types";
-import type { Booking, Venue, Menu, BookingAddon } from "@/types";
+import { bookingRef, clientName, recorderLabel } from "@/types";
+import type { Booking, Venue, Menu, BookingAddon, BookingPayment } from "@/types";
 
 export default function BookingDetailPage() {
   const params = useParams();
@@ -24,6 +25,7 @@ export default function BookingDetailPage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
   const [addons, setAddons] = useState<BookingAddon[]>([]);
+  const [payments, setPayments] = useState<BookingPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<ChargeSettings>(DEFAULT_SETTINGS);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -41,22 +43,51 @@ export default function BookingDetailPage() {
   const [refundError, setRefundError] = useState<string | null>(null);
 
   async function load() {
-    const [{ data: v }, { data: m }, { data: b }, { data: a }] = await Promise.all([
+    const [{ data: v }, { data: m }, { data: b }, { data: a }, { data: p }] = await Promise.all([
       supabase.from("venues").select("*"),
       supabase.from("menus").select("*"),
-      supabase.from("bookings").select("*").eq("id", params.id).single(),
+      supabase
+        .from("bookings")
+        .select("*, recorder:profiles!bookings_created_by_fkey(full_name, role)")
+        .eq("id", params.id)
+        .single(),
       supabase.from("booking_addons").select("*").eq("booking_id", params.id),
+      supabase
+        .from("booking_payments")
+        .select("*, profiles!booking_payments_created_by_fkey(full_name, role)")
+        .eq("booking_id", params.id)
+        .order("paid_on")
+        .order("created_at"),
     ]);
     setVenues(v || []);
     setMenus(m || []);
-    setBooking(b);
+    setBooking(b as Booking);
     setAddons(a || []);
+    setPayments((p as BookingPayment[]) || []);
     setSettings(await fetchSettings(supabase));
     setLoading(false);
   }
 
   useEffect(() => {
     load();
+    // Someone else recording a payment, or an approval writing a discount
+    // onto this booking, shows up here without a refresh.
+    const channel = supabase
+      .channel(`booking-${params.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "booking_payments", filter: `booking_id=eq.${params.id}` },
+        () => load()
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "bookings", filter: `id=eq.${params.id}` },
+        () => load()
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [params.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <div className="text-muted text-sm">Loading…</div>;
@@ -67,10 +98,12 @@ export default function BookingDetailPage() {
   const t = chargesFromBooking(booking, venues, menus, settings);
   const isCancelled = booking.status === "Cancelled";
   const isEntryTest = booking.function_type === "Entry Test";
-  const canRefund = isCancelled && booking.advance > 0 && !booking.advance_refunded && !readOnly;
+  // Everything the client has handed over: the advance plus later payments.
+  const received = t.totalReceived;
+  const canRefund = isCancelled && received > 0 && !booking.advance_refunded && !readOnly;
 
   async function handleDownloadPdf(docType: "Agreement" | "Invoice" | "Quotation") {
-    generateDocumentPdf(booking!, venues, menus, addons, docType, await loadLogo(), settings);
+    generateDocumentPdf(booking!, venues, menus, addons, docType, await loadLogo(), settings, payments);
   }
 
   /** The logo, as a data URI, for whichever document is being produced. */
@@ -109,7 +142,7 @@ export default function BookingDetailPage() {
 
     setWaBusy(true);
     const logo = await loadLogo();
-    const file = documentPdfFile(booking!, venues, menus, addons, docType, logo, settings);
+    const file = documentPdfFile(booking!, venues, menus, addons, docType, logo, settings, payments);
     const message = coveringMessage(booking!, venues, menus, docType, settings);
 
     const result = await sendPdfOnWhatsApp({ file, waNumber: wa, message, booking: booking!, supabase });
@@ -129,11 +162,11 @@ export default function BookingDetailPage() {
     setCancelling(false);
     await load();
     // If money was already taken, prompt for the refund decision right away.
-    if (booking!.advance > 0 && !booking!.advance_refunded) openRefund();
+    if (received > 0 && !booking!.advance_refunded) openRefund();
   }
 
   function openRefund() {
-    setRefundAmount(booking!.advance);
+    setRefundAmount(received);
     setRefundDate(new Date().toISOString().slice(0, 10));
     setRefundNote("");
     setRefundError(null);
@@ -144,7 +177,7 @@ export default function BookingDetailPage() {
     if (!booking) return;
     const amount = Number(refundAmount) || 0;
     if (amount <= 0) return setRefundError("Enter the amount being returned to the client.");
-    if (amount > booking.advance) return setRefundError("The refund can't be more than the advance received.");
+    if (amount > received) return setRefundError("The refund can't be more than the client has paid in.");
 
     setRefunding(true);
     setRefundError(null);
@@ -174,7 +207,7 @@ export default function BookingDetailPage() {
     await supabase.from("ledger_entries").insert({
       entry_date: refundDate,
       type: "expense",
-      description: `Refund of advance — ${clientName(booking)} (${bookingRef(booking)}, cancelled)${
+      description: `Refund to client — ${clientName(booking)} (${bookingRef(booking)}, cancelled)${
         refundNote.trim() ? ` — ${refundNote.trim()}` : ""
       }`,
       amount,
@@ -211,7 +244,7 @@ export default function BookingDetailPage() {
           )}
           {canRefund && (
             <button onClick={openRefund} className="btn-primary rounded-lg px-3.5 py-1.5 text-xs">
-              Refund Advance ({money(booking.advance)})
+              Refund Payment ({money(received)})
             </button>
           )}
         </div>
@@ -220,10 +253,10 @@ export default function BookingDetailPage() {
       {isCancelled && (
         <div className="bg-rose-light text-rose rounded-lg px-3.5 py-2.5 text-[12.5px] font-semibold mb-4">
           This booking has been cancelled. The date/venue/session is free for a new booking.
-          {booking.advance > 0 && !booking.advance_refunded && (
+          {received > 0 && !booking.advance_refunded && (
             <div className="font-normal mt-1">
-              An advance of {money(booking.advance)} is still held against this booking.
-              {readOnly ? "" : " Use “Refund Advance” above once it's returned to the client."}
+              {money(received)} received from the client is still held against this booking.
+              {readOnly ? "" : " Use “Refund Payment” above once it's returned to the client."}
             </div>
           )}
         </div>
@@ -231,7 +264,7 @@ export default function BookingDetailPage() {
 
       {booking.advance_refunded && (
         <div className="bg-primary-dim text-gold-deep rounded-lg px-3.5 py-2.5 text-[12.5px] font-semibold mb-4">
-          Advance of {money(booking.refund_amount)} refunded to the client
+          {money(booking.refund_amount)} refunded to the client
           {booking.refunded_at ? ` on ${fmtDMY(booking.refunded_at.slice(0, 10))}` : ""}.
           {canViewLedger && " It has been posted to the ledger as an expense."}
         </div>
@@ -308,7 +341,8 @@ export default function BookingDetailPage() {
           )}
           {booking.reference && <Row k="Discount Reference" v={booking.reference} />}
           <Row k="Status" v={booking.status} />
-          <Row k="Booking Recorded On" v={fmtDMYTime(new Date(booking.created_at))} />
+          <Row k="Recorded By" v={recorderLabel(booking.recorder)} />
+          <Row k="Recorded On" v={fmtDMYTime(new Date(booking.created_at))} />
         </div>
 
         {addons.length > 0 && (
@@ -378,9 +412,15 @@ export default function BookingDetailPage() {
           <div className="text-right font-bold text-gold-deep">- {money(t.discountAmount)}</div>
           <div className="text-gold-deep opacity-85">Advance Paid</div>
           <div className="text-right font-bold text-gold-deep">- {money(booking.advance)}</div>
+          {t.totalReceived > booking.advance && (
+            <>
+              <div className="text-gold-deep opacity-85">Payments Received Since</div>
+              <div className="text-right font-bold text-gold-deep">- {money(t.totalReceived - booking.advance)}</div>
+            </>
+          )}
           {booking.advance_refunded && (
             <>
-              <div className="text-gold-deep opacity-85">Advance Refunded</div>
+              <div className="text-gold-deep opacity-85">Refunded</div>
               <div className="text-right font-bold text-gold-deep">+ {money(booking.refund_amount)}</div>
             </>
           )}
@@ -398,12 +438,20 @@ export default function BookingDetailPage() {
         )}
       </div>
 
+      <BookingPayments
+        booking={booking}
+        grandTotal={t.grandTotal}
+        payments={payments}
+        canRecord={!readOnly && !isCancelled}
+        onChanged={load}
+      />
+
       {showCancelConfirm && (
         <AlertModal
           title="Cancel this booking?"
           message={`This will mark ${clientName(booking)}'s booking as Cancelled and free up ${venueList.map(v=>v.name).join(" + ")} for ${booking.session} on ${fmtDMY(booking.event_date)}.${
-            booking.advance > 0
-              ? ` An advance of ${money(booking.advance)} was received — you'll be asked next whether to refund it.`
+            received > 0
+              ? ` ${money(received)} has been received — you'll be asked next whether to refund it.`
               : ""
           }`}
           tone="danger"
@@ -417,9 +465,9 @@ export default function BookingDetailPage() {
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-6">
           <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl overflow-hidden">
             <div className="px-5 py-4 border-b border-border bg-gold-light">
-              <div className="font-bold text-sm text-gold-deep">Refund advance payment</div>
+              <div className="font-bold text-sm text-gold-deep">Refund to client</div>
               <div className="text-xs text-muted mt-0.5">
-                {clientName(booking)} · {bookingRef(booking)} · advance received {money(booking.advance)}
+                {clientName(booking)} · {bookingRef(booking)} · received {money(received)}
               </div>
             </div>
             <div className="px-5 py-4 flex flex-col gap-3">

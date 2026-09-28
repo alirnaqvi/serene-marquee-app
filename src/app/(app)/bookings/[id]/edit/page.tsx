@@ -229,11 +229,13 @@ export default function EditBookingPage() {
       heaters: n(heaters),
       cooling,
       advance: n(advance),
+      paymentsTotal: Number(original?.payments_total) || 0,
     },
     venues,
     menus,
     settings
   );
+  const laterPayments = Number(original?.payments_total) || 0;
 
   const isDraft = original?.status === "Draft";
 
@@ -252,8 +254,9 @@ export default function EditBookingPage() {
     }
   }, [advance, loadedAdvance]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const advancePaid = canConfirmBooking(n(advance), settings.confirmationMinimum);
-  const effectiveStatus = statusForAdvance(n(advance), status, settings.confirmationMinimum);
+  // Payments recorded after the advance count towards confirmation too.
+  const advancePaid = canConfirmBooking(n(advance) + laterPayments, settings.confirmationMinimum);
+  const effectiveStatus = statusForAdvance(n(advance) + laterPayments, status, settings.confirmationMinimum);
 
   /**
    * Park an unfinished form again without turning it into a booking. Only
@@ -717,6 +720,13 @@ export default function EditBookingPage() {
               value={advance}
               onChange={(e) => setAdvance(e.target.value === "" ? "" : Number(e.target.value))}
             />
+            <div className="text-[11px] text-muted mt-1">
+              {isDraft
+                ? "Goes into today's ledger as income when you save the booking."
+                : laterPayments > 0
+                ? `The advance taken at booking. ${money(laterPayments)} received since is recorded under Payments on the booking page.`
+                : "The advance taken at booking. Record later payments under Payments on the booking page — don't add them here."}
+            </div>
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Status</label>
@@ -785,9 +795,15 @@ export default function EditBookingPage() {
           <div className="text-right font-bold text-gold-deep">- {money(totals.discountAmount)}</div>
           <div className="text-gold-deep opacity-85">Advance Paid</div>
           <div className="text-right font-bold text-gold-deep">- {money(n(advance))}</div>
+          {laterPayments > 0 && (
+            <>
+              <div className="text-gold-deep opacity-85">Payments Received Since</div>
+              <div className="text-right font-bold text-gold-deep">- {money(laterPayments)}</div>
+            </>
+          )}
           <div className="col-span-2 border-t border-[#8A6A1E]/25 pt-2 mt-1 flex justify-between text-base font-bold text-primary">
             <span>Balance Due</span>
-            <span>{money(totals.grandTotal - n(advance))}</span>
+            <span>{money(totals.balance)}</span>
           </div>
         </div>
 

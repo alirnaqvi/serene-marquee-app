@@ -269,7 +269,11 @@ export type Booking = {
   decoration: number;
   cooling: boolean;
   heaters: number;
-  advance: number;
+  advance: number; // taken at the time of booking
+  // Sum of every later payment recorded against the booking (booking_payments).
+  // Kept on the booking by a database trigger so every total and list is
+  // right without a join.
+  payments_total: number;
   advance_refunded: boolean; // set when a cancelled booking's advance is returned
   refund_amount: number;
   refunded_at: string | null;
@@ -277,7 +281,36 @@ export type Booking = {
   status: BookingStatus;
   created_by: string | null;
   created_at: string;
+  /** Joined from profiles: who recorded the booking. */
+  recorder?: { full_name: string; role: Role } | null;
 };
+
+/**
+ * A payment the client made after the advance — second instalment, the
+ * balance on the day, anything in between. Each one posts to the daily ledger
+ * as income (done by the database, so it happens whatever the recorder's
+ * ledger access).
+ */
+export type BookingPayment = {
+  id: string;
+  booking_id: string;
+  paid_on: string; // ISO date
+  amount: number;
+  method: string | null;
+  note: string | null;
+  ledger_entry_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  profiles?: { full_name: string; role: Role } | null;
+};
+
+export const PAYMENT_METHODS = ["Cash", "Bank transfer", "Cheque", "Online / Easypaisa / JazzCash"] as const;
+
+/** "Syed Muhammad Saqlain Naqvi (Admin)" */
+export function recorderLabel(p: { full_name: string; role: Role } | null | undefined): string {
+  if (!p) return "—";
+  return `${p.full_name} (${ROLE_LABELS[p.role] ?? p.role})`;
+}
 
 export type LedgerEntry = {
   id: string;
@@ -290,7 +323,8 @@ export type LedgerEntry = {
   employee_id: string | null; // set on payroll entries
   vendor_id: string | null; // set on vendor payments
   salary_month: string | null; // 'YYYY-MM' on salary entries
-  category: string | null; // 'salary' | 'advance' | 'vendor' | 'refund' | null
+  // 'salary' | 'advance' | 'vendor' | 'refund' | 'booking_advance' | 'booking_payment' | null
+  category: string | null;
   created_by: string | null;
   created_at: string;
   profiles?: { full_name: string } | null; // joined author name
@@ -308,8 +342,12 @@ export type Employee = {
   created_at: string;
 };
 
-// An advance or a loan handed to an employee, recovered by a fixed monthly
-// instalment cut from their salary until the full amount is paid back.
+// Money handed to an employee ahead of their pay.
+//   advance — the whole amount comes off the salary of `deduct_from` (the
+//             month it was given)
+//   loan    — `monthly_deduction` comes off every month from `deduct_from`
+//             until the full amount is recovered
+// See lib/payroll.ts for how the deductions are worked out.
 export type EmployeeAdvance = {
   id: string;
   employee_id: string;
@@ -317,6 +355,8 @@ export type EmployeeAdvance = {
   amount: number;
   monthly_deduction: number;
   issued_on: string;
+  /** 'YYYY-MM' — first salary it comes off. Null on old rows = month issued. */
+  deduct_from: string | null;
   notes: string | null;
   created_by: string | null;
   created_at: string;

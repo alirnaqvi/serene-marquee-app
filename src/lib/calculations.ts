@@ -15,6 +15,8 @@ export type ChargeInput = {
   heaters: number;
   cooling: boolean;
   advance: number;
+  /** Payments received after the advance (booking_payments). */
+  paymentsTotal?: number;
 };
 
 export type ChargeBreakdown = {
@@ -31,7 +33,9 @@ export type ChargeBreakdown = {
   totalBeforeDiscount: number; // every due added up (foodSubtotal + kprTax + hallCharge + cooling + heating + decoration) — discount hasn't been applied yet
   discountAmount: number;
   grandTotal: number; // totalBeforeDiscount - discountAmount
-  balance: number; // grandTotal - advance
+  /** advance + every later payment */
+  totalReceived: number;
+  balance: number; // grandTotal - advance - later payments
 };
 
 /**
@@ -100,7 +104,8 @@ export function calcTotals(
   // once from that grand total.
   const discountAmount = Math.min(input.discount || 0, totalBeforeDiscount);
   const grandTotal = totalBeforeDiscount - discountAmount;
-  const balance = grandTotal - (input.advance || 0);
+  const totalReceived = (input.advance || 0) + (input.paymentsTotal || 0);
+  const balance = grandTotal - totalReceived;
 
   return {
     foodSubtotal,
@@ -115,6 +120,7 @@ export function calcTotals(
     totalBeforeDiscount,
     discountAmount,
     grandTotal,
+    totalReceived,
     balance,
   };
 }
@@ -132,7 +138,7 @@ export function chargesFromBooking(
     | "heaters"
     | "cooling"
     | "advance"
-  >,
+  > & { payments_total?: number | null },
   allVenues: Venue[],
   allMenus: Menu[],
   settings: ChargeSettings = DEFAULT_SETTINGS
@@ -149,6 +155,7 @@ export function chargesFromBooking(
       heaters: booking.heaters,
       cooling: booking.cooling,
       advance: booking.advance,
+      paymentsTotal: Number(booking.payments_total) || 0,
     },
     allVenues,
     allMenus,

@@ -14,6 +14,18 @@ import type { LedgerEntry } from "@/types";
 type NumField = number | "";
 type Row = LedgerEntry & { running: number };
 
+// Entries the database writes for a booking. They are changed on the booking
+// itself (advance field, Payments panel) so the two can never disagree.
+const BOOKING_CATEGORIES = ["booking_advance", "booking_payment"];
+const CATEGORY_LABELS: Record<string, string> = {
+  booking_advance: "Booking advance",
+  booking_payment: "Client payment",
+  salary: "Salary",
+  advance: "Staff advance / loan",
+  vendor: "Vendor",
+  refund: "Refund",
+};
+
 const ALL_MONTHS = "__all__";
 
 export default function LedgerPage() {
@@ -329,7 +341,22 @@ export default function LedgerPage() {
             {rows.map((e) => (
               <tr key={e.id} className="border-b border-border last:border-0 hover:bg-[#FBF8ED]">
                 <td className="py-2.5 px-2">{fmtDMY(e.entry_date)}</td>
-                <td className="py-2.5 px-2">{e.description}</td>
+                <td className="py-2.5 px-2">
+                  {e.description}
+                  {e.category && CATEGORY_LABELS[e.category] && (
+                    <div className="text-[10.5px] text-muted mt-0.5">
+                      {CATEGORY_LABELS[e.category]}
+                      {e.booking_id && (
+                        <>
+                          {" · "}
+                          <Link href={`/bookings/${e.booking_id}`} className="font-semibold text-gold-deep hover:underline">
+                            Open booking
+                          </Link>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </td>
                 <td className="py-2.5 px-2 text-muted">{e.handed_to || "—"}</td>
                 <td className="py-2.5 px-2">
                   <span
@@ -352,6 +379,11 @@ export default function LedgerPage() {
                 </td>
                 {!readOnly && (
                   <td className="py-2.5 px-2">
+                    {BOOKING_CATEGORIES.includes(e.category || "") ? (
+                      <span className="text-[10.5px] text-muted" title="Change this on the booking">
+                        On booking
+                      </span>
+                    ) : (
                     <button
                       onClick={() => setDeleteTarget(e)}
                       className="text-[11px] font-semibold text-rose hover:underline"
@@ -359,6 +391,7 @@ export default function LedgerPage() {
                     >
                       Delete
                     </button>
+                    )}
                   </td>
                 )}
               </tr>

@@ -412,18 +412,10 @@ export default function NewBookingPage() {
       );
     }
 
-    if (n(advance) > 0 && inserted) {
-      await supabase.from("ledger_entries").insert({
-        entry_date: date,
-        type: "income",
-        description: `Advance — ${clientName({ title: title || null, client: client.trim() })} (${functionType === "Other" ? functionTypeOther : functionType})`,
-        amount: n(advance),
-        booking_id: inserted.id,
-        created_by: user?.id,
-      });
-      // Note: if this staff member lacks ledger access, RLS will silently
-      // reject the ledger insert — the booking itself still saves fine.
-    }
+    // The advance reaches the daily ledger on its own: the database posts it
+    // as income, dated today, the moment the booking is saved — whatever this
+    // account's ledger access. (It used to be written from here, dated on the
+    // function day and silently refused for staff without ledger access.)
 
     router.push(`/bookings/${inserted.id}`);
   }
@@ -746,6 +738,9 @@ export default function NewBookingPage() {
               value={advance}
               onChange={(e) => setAdvance(e.target.value === "" ? "" : Number(e.target.value))}
             />
+            <div className="text-[11px] text-muted mt-1">
+              Goes into today's ledger as income when you save. Later payments are recorded on the booking page.
+            </div>
           </div>
           <div>
             <label className="text-xs font-bold text-muted uppercase">Status</label>

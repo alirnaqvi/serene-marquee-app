@@ -16,7 +16,13 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 function fmtDate(d: string) {
-  return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  // Parsed as UTC and printed as UTC, so the day never shifts with the server's clock.
+  return new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    timeZone: "UTC",
+  });
 }
 
 function statusPill(status: string) {
@@ -100,7 +106,7 @@ export default async function DashboardPage() {
     supabase
       .from("bookings")
       .select(
-        "id, booking_number, venues, client, event_date, session, guests, status, function_type, function_type_other, is_custom_menu, per_head_rate, menu_id, discount, decoration, cooling, heaters, advance"
+        "id, booking_number, venues, title, client, phone, event_date, session, guests, status, function_type, function_type_other, is_custom_menu, per_head_rate, extras_total, menu_id, discount, decoration, cooling, heaters, advance, payments_total"
       )
       .order("event_date", { ascending: true }),
   ]);
@@ -109,20 +115,26 @@ export default async function DashboardPage() {
     ? await supabase.from("ledger_entries").select("type, amount")
     : { data: null as { type: string; amount: number }[] | null };
 
-  const today = new Date().toISOString().slice(0, 10);
-  const in30Days = new Date();
-  in30Days.setDate(in30Days.getDate() + 30);
-  const in30DaysStr = in30Days.toISOString().slice(0, 10);
+  // The server runs on UTC; the office is in Pakistan. Work out "today" and
+  // "this month" on Pakistan time so the list doesn't flip over at 5 a.m.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi" }).format(new Date());
+  const [yy, mm] = today.split("-").map(Number);
+  const monthEnd = `${today.slice(0, 7)}-${String(new Date(yy, mm, 0).getDate()).padStart(2, "0")}`;
+  const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString("en-GB", { month: "long" });
+  const monthYearLabel = new Date(yy, mm - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
   // Drafts are half-filled forms, not bookings: they hold no date and count
   // towards no figure until they are properly saved.
   const activeBookings = (bookings || []).filter(
     (b: any) => b.status !== "Cancelled" && b.status !== "Draft"
   );
-  const upcomingWithin30Days = activeBookings.filter(
-    (b: any) => b.event_date >= today && b.event_date <= in30DaysStr
-  );
-  const upcoming = activeBookings.filter((b: any) => b.event_date >= today).slice(0, 8);
+  // Every booking from today to the last day of this month, in date order.
+  const upcoming = activeBookings
+    .filter((b: any) => b.event_date >= today && b.event_date <= monthEnd)
+    .sort(
+      (a: any, b: any) =>
+        a.event_date.localeCompare(b.event_date) || (a.session === "Lunch" ? -1 : 1) - (b.session === "Lunch" ? -1 : 1)
+    );
   const totalDue = activeBookings.reduce(
     (sum: number, b: any) => sum + chargesFromBooking(b, venues as Venue[], menus as Menu[], settings).balance,
     0
@@ -151,9 +163,9 @@ export default async function DashboardPage() {
       >
         <StatCard
           href="/calendar"
-          label="Upcoming Functions"
-          value={upcomingWithin30Days.length}
-          hint="Next 30 days · View calendar"
+          label={`Upcoming in ${monthLabel}`}
+          value={upcoming.length}
+          hint={`Rest of ${monthLabel} · View calendar`}
           icon={CalendarClock}
           tone="primary"
         />
@@ -195,7 +207,16 @@ export default async function DashboardPage() {
 
       <div className="card fade-up">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[14.5px] font-bold text-primary">Next Functions</div>
+          <div>
+            <div className="text-[14.5px] font-bold text-primary">
+              Upcoming bookings for the month of {monthLabel}
+            </div>
+            <div className="text-[11.5px] text-muted mt-0.5">
+              {upcoming.length === 0
+                ? `Nothing booked from today to the end of ${monthYearLabel}.`
+                : `${upcoming.length} function${upcoming.length === 1 ? "" : "s"} from today to the end of ${monthYearLabel}`}
+            </div>
+          </div>
           <Link href="/calendar" className="text-xs font-bold text-gold-deep hover:underline flex items-center gap-1">
             Open Calendar <ArrowUpRight size={12} />
           </Link>
@@ -218,7 +239,7 @@ export default async function DashboardPage() {
               {upcoming.length === 0 && (
                 <tr>
                   <td colSpan={8} className="text-center py-8 text-muted text-sm">
-                    No upcoming functions
+                    No more bookings this month
                   </td>
                 </tr>
               )}
@@ -230,6 +251,11 @@ export default async function DashboardPage() {
                       <Link href={`/bookings/${b.id}`} className="hover:underline font-medium">
                         {fmtDate(b.event_date)}
                       </Link>
+                      {b.event_date === today && (
+                        <span className="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold bg-gold-light text-gold-deep">
+                          Today
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 px-2">
                       {(b.venues || [])
