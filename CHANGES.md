@@ -1,3 +1,101 @@
+# Round 18 — client payments, auto-applied discounts, payroll ledger
+
+**Run `supabase/migration-2026-18.sql` in the Supabase SQL editor before
+deploying.** It is safe to re-run.
+
+## 1. Booking advances now reach the ledger
+
+They weren't showing for three reasons: the entry was dated on the *function*
+date (a December wedding's advance sat in December), it was silently refused
+for anyone without ledger access, and editing the advance never touched the
+ledger at all.
+
+The database now posts the advance itself, dated the day it was taken, for
+whoever saves the booking, and keeps its amount in step if the advance is
+corrected. The migration re-dates old advance entries to the day they were
+recorded and adds any that were missing.
+
+> If anyone typed advances into the ledger by hand because they weren't
+> appearing, those will now be doubled. Search the ledger for the client's name
+> and delete the hand-typed one — the automatic one says "Open booking" under it.
+
+## 2. Recording payments after the advance
+
+Every booking page has a **Payments** panel that works like a vendor account:
+date, method (cash, bank transfer…), note, amount and running balance, with a
+blank row at the bottom for the next payment and a *Full balance* shortcut.
+
+Each payment goes into the daily ledger as income automatically; deleting one
+takes it back out. Balance Due everywhere — booking list, dashboard, invoice,
+agreement, WhatsApp message — subtracts these payments. A booking shows
+**Paid in full** once the balance reaches zero. Payments also count towards the
+amount needed to confirm a booking, and a cancelled booking's refund can cover
+everything received, not just the advance.
+
+Booking entries in the ledger link back to their booking and can only be
+changed from the booking, so the two never disagree.
+
+## 3. Approved discounts apply themselves
+
+Approving Rs. 135,000 now writes 135,000 onto that booking in the same step.
+If the requester has the booking open, the discount box fills in by itself. The
+dashboard notice says it has been applied. Approvals granted before this
+update that were never used are applied by the migration.
+
+## 4. Recorded By on bookings and PDFs
+
+The bookings table has a **Recorded By** column — name, role, date and time —
+and it is searchable and in the Excel export. The booking page, invoice and
+agreement PDF show the same. For a booking started as a draft, it is the person
+and time at which it was actually saved, not when the form was first opened.
+
+## 5. Dashboard shows the rest of this month
+
+The list is now **Upcoming bookings for the month of September** — every
+confirmed and tentative booking from today to the end of the month, with the
+weekday and a *Today* tag. Dates use Pakistan time.
+
+## 6. Menus & Venues editing
+
+- Split into tabs: Menus, Venues, Add-ons, Other charges. Search still spans
+  all of them and jumps to the tab with matches.
+- Each menu, venue and item opens in its own editor. A menu's items are a list
+  you can add to, rename, reorder and remove from one by one — paste a comma
+  list to add many at once.
+- Nothing is created until you press Save (Add used to put a blank "New Menu"
+  in the database straight away). Closing with unsaved changes asks first.
+- Add-on items can be moved to another category or a new one.
+- **Fixed:** editing an add-on only loaded its name, so saving a rename on Lamb
+  Roast switched off its per-piece rate.
+
+## 7. Payroll — advances and loans
+
+- **Advance:** the whole amount comes off the salary of the month it's given.
+- **Loan:** you set how much comes off each month and from which month; it
+  keeps coming off until cleared.
+
+Both are worked out automatically, so **Net Payable** is always the real
+take-home figure — there is no "Deduct" button to remember. If an advance is
+bigger than the month's pay, what doesn't fit comes off next month.
+
+The payroll table is simplified to Base, Advance, Loan, Bonus/Deduction, Net
+Payable, what the employee still owes, and paid/not paid, with a **Pay** button.
+Clicking an employee opens **their ledger**: this month's breakdown, Give
+advance / Give loan, each loan's progress and when it clears, a vendor-style
+account (given, recovered, still owes), and salary history — all exportable.
+
+Once a month's salary is paid, that month's deductions are fixed; changing a
+loan's instalment afterwards only affects unpaid months. *Undo payment* reverses
+it if a salary was recorded by mistake.
+
+> Loans and advances already on the books start deducting automatically from
+> this month. Instalments applied by hand in earlier months stay exactly as they
+> were. Under the new rule, any **advance** still partly outstanding comes off
+> this month's salary in full — change it to a later month from the employee's
+> ledger if that's too much at once.
+
+---
+
 # Serene Marquee — September 2026 changes
 
 Everything below is already applied in this zip. Run
