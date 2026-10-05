@@ -144,6 +144,16 @@ export default function LedgerPage() {
     if (!deleteTarget || readOnly) return;
     setDeleting(true);
     await supabase.from("ledger_entries").delete().eq("id", deleteTarget.id);
+    // A salary payment also fixed that month's advance/loan deductions —
+    // clear them so the payroll screen works the month out afresh.
+    if (deleteTarget.category === "salary" && deleteTarget.employee_id && deleteTarget.salary_month) {
+      await supabase
+        .from("employee_adjustments")
+        .delete()
+        .eq("employee_id", deleteTarget.employee_id)
+        .eq("month", deleteTarget.salary_month)
+        .eq("kind", "repayment");
+    }
     setDeleteTarget(null);
     setDeleting(false);
   }
