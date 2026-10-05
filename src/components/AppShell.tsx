@@ -43,7 +43,7 @@ export default function AppShell({
 
         {/* Sidebar: fixed off-canvas drawer on mobile, static column on desktop */}
         <div
-          className={`fixed inset-y-0 left-0 z-50 h-dvh transition-transform duration-200 lg:static lg:h-auto lg:translate-x-0 ${
+          className={`fixed inset-y-0 left-0 z-50 h-dvh transition-transform duration-200 lg:sticky lg:top-0 lg:bottom-auto lg:h-dvh lg:self-start lg:translate-x-0 ${
             mobileOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >
