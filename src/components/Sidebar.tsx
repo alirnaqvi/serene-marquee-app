@@ -69,8 +69,8 @@ export default function Sidebar({
   }
 
   return (
-    <div className="w-64 sm:w-60 h-full shrink-0 flex flex-col p-4 bg-gradient-to-b from-[#18150F] via-[#141210] to-[#0F0D0A] text-[#EAE3CC] border-r border-[#2A2620] overflow-y-auto">
-      <div className="flex items-center gap-2.5 pb-4 mb-3 border-b border-gold/20 px-1">
+    <div className="w-64 sm:w-60 h-full shrink-0 flex flex-col p-4 bg-gradient-to-b from-[#18150F] via-[#141210] to-[#0F0D0A] text-[#EAE3CC] border-r border-[#2A2620] overflow-hidden">
+      <div className="flex items-center gap-2.5 pb-4 mb-3 border-b border-gold/20 px-1 shrink-0">
         <img src="/logo.png" alt="Serene Marquee" className="w-10 h-10 rounded-xl shadow-lg ring-1 ring-gold/30" />
         <div>
           <div className="text-[15.5px] font-bold font-serif text-gold-light leading-tight tracking-tight">
@@ -80,7 +80,7 @@ export default function Sidebar({
         </div>
       </div>
 
-      <nav className="flex flex-col gap-1">
+      <nav className="flex flex-col gap-1 flex-1 min-h-0 overflow-y-auto overscroll-contain pr-0.5">
         {NAV_ITEMS.filter(
           (item) =>
             (!item.ledgerOnly || canViewLedger) &&
@@ -94,7 +94,7 @@ export default function Sidebar({
                 key={item.href}
                 href={item.href}
                 onClick={onNavigate}
-                className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13.5px] font-medium ${
+                className={`group flex items-center gap-3 px-3 py-2.5 [@media(max-height:760px)]:py-2 rounded-xl text-[13.5px] font-medium ${
                   active
                     ? "bg-gradient-to-br from-[#D3AF52] to-[#9C7A26] text-[#171410] font-bold shadow-[0_6px_18px_-8px_rgba(184,145,46,0.6)]"
                     : "text-[#CFC6A6] hover:bg-white/[0.06] hover:text-gold-light"
@@ -111,7 +111,7 @@ export default function Sidebar({
         )}
       </nav>
 
-      <div className="mt-auto pt-3.5 border-t border-gold/15">
+      <div className="shrink-0 mt-2 pt-3 border-t border-gold/15 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center gap-2.5 px-1 mb-2.5">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#D3AF52] to-[#8A6A1E] text-[#171410] text-[11.5px] font-bold flex items-center justify-center shrink-0">
             {initials(fullName) || "?"}
@@ -126,9 +126,9 @@ export default function Sidebar({
         </div>
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-2 text-[11.5px] text-[#A99A6E] hover:text-gold-light px-1.5 py-1.5 rounded-lg hover:bg-white/[0.05]"
+          className="w-full flex items-center gap-2 text-[12.5px] font-medium text-[#CFC6A6] hover:text-gold-light px-2.5 py-2 rounded-lg border border-white/10 hover:bg-white/[0.06]"
         >
-          <LogOut size={13.5} strokeWidth={2} />
+          <LogOut size={15} strokeWidth={2} />
           Sign out
         </button>
       </div>
