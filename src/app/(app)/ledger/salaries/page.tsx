@@ -1283,16 +1283,16 @@ function EmployeeLedger({
                         ) : (
                           <span className="font-bold text-emerald">Cleared</span>
                         )}
-                        {!readOnly && i.outstanding > 0 && (
+                        {!readOnly && (
                           <div className="flex gap-2 justify-end mt-0.5">
                             <button onClick={() => onEditItem(a)} className="text-[11px] font-semibold text-gold-deep hover:underline">
                               Change
                             </button>
-                            {i.recovered === 0 && (
-                              <button onClick={() => onDeleteItem(a)} className="text-[11px] font-semibold text-rose hover:underline">
-                                Delete
-                              </button>
-                            )}
+                            {/* Always offered; deleteItem refuses (with a message) if
+                                a paid salary has already locked in a deduction. */}
+                            <button onClick={() => onDeleteItem(a)} className="text-[11px] font-semibold text-rose hover:underline">
+                              Delete
+                            </button>
                           </div>
                         )}
                       </div>
