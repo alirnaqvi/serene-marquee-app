@@ -70,6 +70,9 @@ export default function SalariesPage() {
   const [modal, setModal] = useState<Modal>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Edit a payment from an earlier month: switch the screen to that month,
+  // then open the payment form once the figures for it are ready.
+  const [pendingPay, setPendingPay] = useState<{ empId: string; month: string } | null>(null);
   const [confirm, setConfirm] = useState<
     | { kind: "left"; employee: Employee }
     | { kind: "deleteItem"; item: EmployeeAdvance }
@@ -193,6 +196,18 @@ export default function SalariesPage() {
     setDate(p.payment?.entry_date || todayIso());
     setModal({ kind: "pay", employee: emp });
   }
+  function requestEditPay(emp: Employee, m: string) {
+    if (m === month) return openPay(emp);
+    setPendingPay({ empId: emp.id, month: m });
+    setMonth(m);
+  }
+  useEffect(() => {
+    if (!pendingPay || pendingPay.month !== month) return;
+    const emp = employees.find((e) => e.id === pendingPay.empId);
+    setPendingPay(null);
+    if (emp && payroll.get(emp.id)) openPay(emp);
+  }, [pendingPay, month, payroll]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function openAdvance(emp: Employee) {
     resetForm();
     setModal({ kind: "advance", employee: emp });
@@ -723,6 +738,7 @@ export default function SalariesPage() {
             setError(null);
           }}
           onPay={() => openPay(openEmployee)}
+          onEditPay={(m) => requestEditPay(openEmployee, m)}
           onUndoPay={(entry) => setConfirm({ kind: "undoPay", employee: openEmployee, entry })}
           onAdvance={() => openAdvance(openEmployee)}
           onLoan={() => openLoan(openEmployee)}
@@ -745,7 +761,8 @@ export default function SalariesPage() {
           <div className="bg-white rounded-xl w-full max-w-md shadow-2xl overflow-hidden my-8">
             <div className="px-5 py-4 border-b border-border">
               <div className="font-bold text-sm text-primary">
-                {modal.kind === "pay" && `Pay ${monthName(month)} salary — ${modal.employee.full_name}`}
+                {modal.kind === "pay" &&
+                  `${payroll.get(modal.employee.id)?.current.payment ? "Edit" : "Pay"} ${monthName(month)} salary — ${modal.employee.full_name}`}
                 {modal.kind === "advance" && `Give an advance — ${modal.employee.full_name}`}
                 {modal.kind === "loan" && `Give a loan — ${modal.employee.full_name}`}
                 {modal.kind === "editItem" &&
@@ -1013,12 +1030,12 @@ export default function SalariesPage() {
       )}
       {confirm?.kind === "undoPay" && (
         <AlertModal
-          title="Undo this salary payment?"
+          title="Delete this salary payment?"
           message={`${money(confirm.entry.amount)} paid to ${confirm.employee.full_name} for ${monthName(
             confirm.entry.salary_month || month
-          )} will be removed from the ledger, and that month's advance and loan deductions will be worked out again.`}
+          )} will be deleted from the ledger and the month will show as unpaid. That month's advance and loan deductions will be worked out again.`}
           tone="danger"
-          confirmLabel="Undo Payment"
+          confirmLabel="Delete Payment"
           onConfirm={() => undoPayment(confirm.employee, confirm.entry)}
           onClose={() => setConfirm(null)}
         />
@@ -1038,6 +1055,7 @@ function EmployeeLedger({
   error,
   onClose,
   onPay,
+  onEditPay,
   onUndoPay,
   onAdvance,
   onLoan,
@@ -1056,6 +1074,7 @@ function EmployeeLedger({
   error: string | null;
   onClose: () => void;
   onPay: () => void;
+  onEditPay: (month: string) => void;
   onUndoPay: (entry: LedgerEntry) => void;
   onAdvance: () => void;
   onLoan: () => void;
@@ -1180,7 +1199,7 @@ function EmployeeLedger({
                       onClick={() => onUndoPay(c.payment!)}
                       className="text-xs font-semibold text-rose border border-rose/30 rounded-lg px-3 py-1.5 hover:bg-rose-light"
                     >
-                      Undo payment
+                      Delete payment
                     </button>
                   </>
                 ) : (
@@ -1341,6 +1360,7 @@ function EmployeeLedger({
                   <th className="py-2 px-2 text-right">Loan</th>
                   <th className="py-2 px-2 text-right">Net</th>
                   <th className="py-2 px-2">Paid</th>
+                  {!readOnly && <th className="py-2 px-2 text-right">Payment</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1361,6 +1381,28 @@ function EmployeeLedger({
                         <span className="text-rose">Not paid</span>
                       )}
                     </td>
+                    {!readOnly && (
+                      <td className="py-1.5 px-2 text-right whitespace-nowrap">
+                        {m.payment ? (
+                          <>
+                            <button
+                              onClick={() => onEditPay(m.month)}
+                              className="text-[11px] font-semibold text-primary hover:underline mr-3"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => onUndoPay(m.payment!)}
+                              className="text-[11px] font-semibold text-rose hover:underline"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
