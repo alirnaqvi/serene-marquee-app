@@ -75,16 +75,23 @@ export const ROLE_LABELS: Record<Role, string> = {
 };
 
 // Roles that automatically see the ledger/income-expense/payroll data.
-// General Manager and Developer are deliberately excluded — even if
-// can_view_ledger were somehow set true for one, RLS still blocks it.
+// Anyone else (including a General Manager) sees it only when Admin or
+// Developer switches on their individual "Ledger Access" in Staff & Access.
 export const LEDGER_ROLES: Role[] = ["owner", "admin", "manager"];
 
-// Staff & Access screen — per the owner's finalized policy:
-//   - Owner, Admin: can VIEW it, cannot edit
+// Staff & Access screen:
+//   - Owner: can VIEW it, cannot edit
 //   - Manager, General Manager: cannot see it at all
-//   - Developer: the only role that can EDIT it
+//   - Admin, Developer: can EDIT roles and ledger access (ACCESS_EDIT_ROLES)
+//   - Developer only: create / switch off / remove logins (STAFF_EDIT_ROLES)
+// The database enforces the same rules (see migration 2026-20), including that
+// an Admin can't touch Admin/Developer/Owner accounts or their own access.
+export const ACCESS_EDIT_ROLES: Role[] = ["admin", "developer"];
 export const STAFF_EDIT_ROLES: Role[] = ["developer"];
 export const STAFF_VIEW_ROLES: Role[] = ["owner", "admin", "developer"];
+
+/** Roles an Admin may assign or change. Everything above this is Developer-only. */
+export const ADMIN_ASSIGNABLE_ROLES: Role[] = ["staff", "manager", "general_manager"];
 
 // Developer Console — a separate area for the one role whose job is
 // watching over the system/staff rather than doing bookings day-to-day.

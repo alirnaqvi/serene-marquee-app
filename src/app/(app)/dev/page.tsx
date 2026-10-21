@@ -406,7 +406,7 @@ export default function DeveloperConsolePage() {
         </div>
         <div className="text-[11px] text-muted mt-3">
           Ledger entry counts aren't shown here since ledger data itself stays restricted to Owner/Admin/Manager
-          at the database level — this table only reflects what's safe to see without touching that data.
+          (and anyone granted Ledger Access) at the database level — this table only reflects what's safe to see without touching that data.
         </div>
       </div>
 

@@ -94,9 +94,8 @@ export default async function DashboardPage() {
     role = me?.role ?? null;
     canViewLedgerFlag = me?.can_view_ledger ?? false;
   }
-  const isGeneralManager = role === "general_manager";
   const hasLedgerAccess =
-    role === "owner" || role === "admin" || role === "manager" || (!!canViewLedgerFlag && !isGeneralManager);
+    role === "owner" || role === "admin" || role === "manager" || !!canViewLedgerFlag;
 
   const settings = await fetchSettings(supabase);
 

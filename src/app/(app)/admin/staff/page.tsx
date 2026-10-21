@@ -9,6 +9,8 @@ import {
   ROLE_LABELS,
   STAFF_EDIT_ROLES,
   STAFF_VIEW_ROLES,
+  ACCESS_EDIT_ROLES,
+  ADMIN_ASSIGNABLE_ROLES,
   LEDGER_ROLES,
   discountLimitLabel,
   isReadOnlyRole,
@@ -182,7 +184,12 @@ export default function StaffAdminPage() {
 
   const myRole = myProfile?.role || "staff";
   const canView = STAFF_VIEW_ROLES.includes(myRole);
-  const canEdit = STAFF_EDIT_ROLES.includes(myRole);
+  const canEdit = STAFF_EDIT_ROLES.includes(myRole); // logins: add / switch off / remove (Developer)
+  const canEditAccess = ACCESS_EDIT_ROLES.includes(myRole); // roles + ledger access (Admin, Developer)
+  // An Admin may only manage Staff / Manager / General Manager accounts.
+  // Admin, Developer and Owner accounts (and your own) are Developer-only.
+  const canEditRow = (p: Profile) =>
+    canEditAccess && p.id !== myProfile?.id && (myRole === "developer" || ADMIN_ASSIGNABLE_ROLES.includes(p.role));
 
   if (!canView) {
     return (
@@ -200,9 +207,9 @@ export default function StaffAdminPage() {
     <div>
       <div className="text-xl font-bold font-serif text-primary mb-1">Staff & Access</div>
       <div className="text-xs text-muted mb-5">
-        {canEdit
+        {canEditAccess
           ? "Manage roles and daily-ledger visibility for everyone with a login. Changes take effect immediately."
-          : "View-only — roles and ledger access here are edited by the Admin account."}
+          : "View-only — roles and ledger access here are edited by the Admin or Developer account."}
       </div>
 
       {canEdit && (
@@ -287,7 +294,6 @@ export default function StaffAdminPage() {
             {staff.map((p) => {
               const isSelf = p.id === myProfile?.id;
               const ledgerAutoGranted = LEDGER_ROLES.includes(p.role);
-              const isGeneralManager = p.role === "general_manager";
               return (
                 <tr key={p.id} className="border-b border-border last:border-0">
                   <td className="py-2.5 px-2 font-semibold">
@@ -296,30 +302,32 @@ export default function StaffAdminPage() {
                     {p.username && <div className="text-[11px] text-muted font-normal">@{p.username}</div>}
                   </td>
                   <td className="py-2.5 px-2">
-                    {canEdit ? (
+                    {canEditRow(p) ? (
                       <select
                         className="text-[12.5px] py-1"
                         value={p.role}
-                        disabled={isSelf || savingId === p.id}
+                        disabled={savingId === p.id}
                         onChange={(e) => updateRole(p.id, e.target.value as Profile["role"])}
                       >
                         <option value="staff">Staff</option>
                         <option value="general_manager">General Manager</option>
                         <option value="manager">Manager</option>
-                        <option value="admin">Admin</option>
-                        <option value="owner">Owner</option>
-                        <option value="developer">Developer</option>
+                        {myRole === "developer" && (
+                          <>
+                            <option value="admin">Admin</option>
+                            <option value="owner">Owner</option>
+                            <option value="developer">Developer</option>
+                          </>
+                        )}
                       </select>
                     ) : (
                       <span className="text-[12.5px] font-semibold">{ROLE_LABELS[p.role]}</span>
                     )}
                   </td>
                   <td className="py-2.5 px-2">
-                    {isGeneralManager ? (
-                      <span className="text-[11px] text-muted italic">No access (General Manager policy)</span>
-                    ) : ledgerAutoGranted ? (
+                    {ledgerAutoGranted ? (
                       <span className="text-[11px] text-muted italic">Granted automatically ({ROLE_LABELS[p.role]})</span>
-                    ) : canEdit ? (
+                    ) : canEditRow(p) ? (
                       <label className="flex items-center gap-2">
                         <input
                           type="checkbox"
@@ -408,7 +416,13 @@ export default function StaffAdminPage() {
             to, but cannot create, edit or delete anything.
           </li>
           <li>
-            <b className="text-primary">Admin / Developer</b> — no discount ceiling.
+            <b className="text-primary">Admin / Developer</b> — no discount ceiling. Both can change roles and
+            ledger access; only the Developer can add, switch off or remove logins.
+          </li>
+          <li>
+            <b className="text-primary">Ledger access</b> — Owner, Admin and Manager have it automatically. For
+            anyone else (including a General Manager) tick “Ledger Access” to grant it. It covers the Ledger,
+            Salaries and Vendors pages and the dashboard income/expense figures.
           </li>
           <li>
             <b className="text-primary">Going above your limit</b> — send an approval request up the chain:
@@ -540,10 +554,10 @@ export default function StaffAdminPage() {
         </div>
       )}
 
-      {canEdit && (
+      {canEditAccess && (
         <div className="text-[11.5px] text-muted mt-3">
-          You can't change your own role here (to avoid accidentally locking yourself out) — ask another
-          admin, or use the Supabase dashboard if you're the only one.
+          You can't change your own role here (to avoid accidentally locking yourself out).
+          {myRole === "admin" && " Admin, Developer and Owner accounts can only be changed by the Developer."}
         </div>
       )}
     </div>
